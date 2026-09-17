@@ -1,0 +1,15 @@
+# External reference material pulled for porting - not part of this repo
+/reference/
+
+# Nextflow runtime
+.nextflow*
+work/
+results/
+.nf-test*
+
+# R
+.Rproj.user/
+*.Rhistory
+
+# macOS
+.DS_Store
