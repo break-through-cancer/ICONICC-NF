@@ -6,6 +6,7 @@
 work/
 results/
 .nf-test*
+tests/fixtures/
 
 # R
 .Rproj.user/
