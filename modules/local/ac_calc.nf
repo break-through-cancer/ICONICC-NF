@@ -4,7 +4,7 @@ process AC_CALC {
     memory '4 GB'
 
     input:
-    tuple val(meta), path(tumor_counts), path(phased_files), path(ad_files), path(hetinfo_files)
+    tuple val(meta), path(tumor_counts), path(phased_files, stageAs: 'phased/*'), path(ad_files, stageAs: 'ad/*'), path(hetinfo_files, stageAs: 'hetinfo/*')
 
     output:
     tuple val(meta), path("*_read_depth.txt"), path("*_allelic_counts.txt"), path("*_plots.pdf")
