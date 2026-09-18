@@ -20,7 +20,7 @@ nextflow_process {
         }
         then {
             assert process.success
-            assert path(process.out[0].get(0)[1]).exists()
+            assert process.out[0].get(0)[1].every { it.exists() }
         }
     }
 }
