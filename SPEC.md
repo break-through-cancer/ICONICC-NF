@@ -440,3 +440,182 @@ expected and acceptable, since Phase 1 was explicitly a standalone validation ha
 **Single-pair case**: a two-row samplesheet (one normal, one tumor for one patient)
 produces exactly one item through the cross in step 3 — identical behavior to Phase 1,
 just expressed through a samplesheet instead of ten CLI flags.
+
+## 12. Parabricks calling + joint genotyping (Phase 2)
+
+Automates what §11.2 called transitional: the samplesheet's `joint_vcf`/`joint_vcf_index`
+columns, supplied by hand until now, get computed by the pipeline instead. This closes
+the gap between §5's design (already resolved: VQSR tuning values, the `ExcessHet` hard
+filter, GATK 4.2.6.1, the Parabricks/GATK4 HaplotypeCaller flag mapping) and actual code.
+
+### 12.1 Architecture
+
+Two new subworkflows, mirroring the sample-scoped/pair-scoped split §11.3 already
+established for `SAMPLE_READ_COUNTS`/`CNV_CORE`:
+
+```
+SAMPLESHEET_TO_PAIRS  (unchanged, minus joint_vcf/joint_vcf_index columns — see §12.4)
+        │
+        ├─→ samples ──→ SAMPLE_READ_COUNTS        (existing, unchanged)
+        │
+        └─→ samples ──→ SAMPLE_GERMLINE_CALLING   (new, sample-scoped, §12.2)
+                              │
+                              ▼
+                         [meta(patient,sample,...), gvcf, gvcf_tbi]
+                              │
+        pairs ────────────────┤  join normal's GVCF + tumor's GVCF by (patient, sample)
+                              ▼
+                       JOINT_GENOTYPING            (new, pair-scoped, §12.3)
+                              │
+                              ▼
+                       [pair_meta, vcf, tbi]  ──→ replaces joint_vcf_ch in main.nf
+                                                        │
+                                                        ▼
+                                                    CNV_CORE (unchanged)
+```
+
+**Dedup shape** (confirmed with the dev): calling is the dedup point, joint genotyping is
+not. `SAMPLE_GERMLINE_CALLING` gets dedup for free the same way `SAMPLE_READ_COUNTS` does
+— `SAMPLESHEET_TO_PAIRS.out.samples` already has one row per unique sample, so a normal
+referenced by 3 tumor rows is called once. `JOINT_GENOTYPING` stays pairwise per patient,
+matching both the WDL's existing behavior and §5's "feed it just the one patient's two
+samples per pipeline run" — a shared normal is joint-genotyped separately against each of
+its tumors, never cohort-batched. `JOINT_GENOTYPING`'s input is therefore a join of
+`SAMPLE_GERMLINE_CALLING`'s output against each pair's `normal_sample_id` and
+`tumor_sample_id`, keyed on `[patient, sample]` — the same join pattern `main.nf` already
+uses for `tumor_counts_ch` (§11.3 step 4), done for both roles and combined into one
+`[normal_gvcf, normal_tbi, tumor_gvcf, tumor_tbi]` tuple per pair. A missing GVCF on either
+side is a hard error (`failOnMismatch: true`), matching every other meta-keyed join in this
+codebase.
+
+### 12.2 `SAMPLE_GERMLINE_CALLING` (new, sample-scoped)
+
+Runs `PARABRICKS_HAPLOTYPECALLER` (vendored from `nf-core/modules`, verbatim — container
+`nvcr.io/nvidia/clara/clara-parabricks:4.7.1-1`, sarek's current default; no org precedent
+to match, see decision log below) once per unique `(patient, sample)`, `ext.args` including
+`--gvcf` per §5.2's flag mapping. Feeds it the sample's `recal.cram` directly — Parabricks
+accepts CRAM as `--in-bam` per NVIDIA's own docs, so no `CramToBamTask` equivalent is
+needed, exactly as §5 already specified. Restricts calling to the WDL's own
+`unpadded_intervals_file` (see §12.5) rather than the true unrestricted whole genome, so
+assembly-gap regions aren't wastefully processed — but does **not** split that file into
+shards (see decision log: no interval scatter for v1). Output: `[meta(patient, sample,
+sex, status), gvcf, gvcf_tbi]` — one GVCF per unique sample, `.tbi`-indexed via a
+`TABIX_TABIX` step alongside the Parabricks call, since `PARABRICKS_HAPLOTYPECALLER`
+itself emits `.g.vcf.gz` without an index.
+
+### 12.3 `JOINT_GENOTYPING` (new, pair-scoped)
+
+Composes vendored nf-core modules directly — `GATK4_GENOMICSDBIMPORT`,
+`GATK4_GENOTYPEGVCFS`, `GATK4_VARIANTFILTRATION`, `GATK4_VARIANTRECALIBRATOR`,
+`GATK4_APPLYVQSR` — rather than importing sarek's `BAM_JOINT_CALLING_GERMLINE_GATK`
+subworkflow as a black box (decision log below explains why). Chain, per pair:
+
+```
+GenomicsDBImport(normal_gvcf, tumor_gvcf, calling_intervals)
+  → GenotypeGVCFs                                     (one call, whole calling_intervals region)
+  → VariantFiltration  --filter-expression "ExcessHet > 54.69" --filter-name ExcessHet
+  → MakeSitesOnlyVcf                                   (training input only, not the final VCF)
+  → VariantRecalibrator(SNP, on sites-only)  ┐
+  → VariantRecalibrator(INDEL, on sites-only)┘
+  → ApplyVQSR(SNP)  → ApplyVQSR(INDEL, chained on SNP's output)
+  → [pair_meta, vcf, tbi]
+```
+
+Verified directly against `ICONICC_paired.3.wdl` (not inferred from sarek's subworkflow,
+which doesn't do this): `ApplyRecalibration`'s actual input — and therefore the *final*
+`output_vcf_file`/`output_vcf_index_file` that feeds the CNV half (§6) — is the
+`ExcessHet`-filtered VCF with VQSR applied on top, not the raw `GenotypeGVCFs` output. The
+`ExcessHet` filter is a soft `VariantFiltration` tag (matching the WDL's own
+`HardFilterAndMakeSitesOnlyVcf` task — the FILTER column is annotated, not the record
+dropped), and `MakeSitesOnlyVcf`'s output is used only as `VariantRecalibrator`'s training
+input, per the WDL. `ext.args`/tranche overrides for `VariantRecalibrator`/`ApplyVQSR`
+(SNP/INDEL) are exactly §5.1's already-resolved values — no new decision needed there.
+
+No `BCFTOOLS_SORT`/`MergeVcfs` step: those exist in sarek's subworkflow purely to
+reassemble interval-scattered shards, and per the no-scatter decision below,
+`GenotypeGVCFs` runs once per pair over the whole `calling_intervals` region and already
+emits one complete, sorted VCF.
+
+### 12.4 Samplesheet schema change
+
+`joint_vcf`/`joint_vcf_index` columns are removed entirely from the schema §11.2 defined —
+exactly the outcome §11.2 already flagged as expected once this phase landed.
+`validateSamplesheetRow()` drops the tumor-row check for those two columns. This is a
+breaking schema change (any hand-written samplesheet from Phase 1.5 needs its two trailing
+columns removed); acceptable since §11.2 called the schema unstable pending this phase and
+there is no external consumer yet.
+
+### 12.5 New reference inputs
+
+New `params.*`, all resolved from the production Cirro config
+(`reference/btc-wdl-pipelines/cirro/process-input.json`) rather than guessed:
+
+```
+calling_intervals                          s3://gatk-test-data/intervals/hg38.even.handcurated.20k.intervals
+dbsnp_vcf(+idx)                             s3://broad-references/hg38/v0/Homo_sapiens_assembly38.dbsnp138.vcf(.idx)
+hapmap_resource_vcf(+idx)                   s3://broad-references/hg38/v0/hapmap_3.3.hg38.vcf.gz(.tbi)
+omni_resource_vcf(+idx)                     s3://broad-references/hg38/v0/1000G_omni2.5.hg38.vcf.gz(.tbi)
+one_thousand_genomes_resource_vcf(+idx)     s3://broad-references/hg38/v0/1000G_phase1.snps.high_confidence.hg38.vcf.gz(.tbi)
+mills_resource_vcf(+idx)                    s3://broad-references/hg38/v0/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz(.tbi)
+axiomPoly_resource_vcf(+idx)                s3://broad-references/hg38/v0/Axiom_Exome_Plus.genotypes.all_populations.poly.hg38.vcf.gz(.tbi)
+```
+
+`calling_intervals` is the WDL's own `unpadded_intervals_file` — the un-scattered,
+gap-excluding base interval list `SplitIntervalList` shards in the original WDL. Used
+unsplit for both `PARABRICKS_HAPLOTYPECALLER` and `GATK4_GENOTYPEGVCFS` (§12.2/§12.3),
+per the no-scatter decision below. The WDL's `eval_interval_list` and
+`scattered_calling_intervals_list` are not needed: the former only feeds
+`CollectVariantCallingMetrics`, already deferred (§8); the latter is a pre-split shard
+manifest with no purpose once scatter is dropped.
+
+### 12.6 Decision log
+
+**Interval scatter — dropped for v1.** The WDL scatters `HaplotypeCaller` and
+`GenotypeGVCFs`/VQSR across ~50 interval shards, a CPU-parallelism trick from the original
+Broad WGS-joint-calling template. Parabricks HaplotypeCaller already processes the whole
+genome in one GPU job — the reason for that scatter disappears on the calling side — and
+this pipeline runs one patient's two samples per invocation, never a cohort, so
+joint-genotyping's scatter buys little either. **Resolved (confirmed with the dev)**: run
+each stage as a single whole-genome job per pair. This is why §12.3's chain has no
+`BCFTOOLS_SORT`/merge step and why `JOINT_GENOTYPING` needs no `num_intervals` bookkeeping.
+
+**Joint-genotyping integration — vendor sarek's modules, write our own orchestration, not
+sarek's subworkflow.** Three approaches were weighed: (A) fork sarek's
+`BAM_JOINT_CALLING_GERMLINE_GATK` subworkflow file and patch in `ExcessHet` — rejected,
+because that subworkflow's wiring exists mainly to handle interval-scatter bookkeeping
+(`meta.num_intervals`, `groupTuple(by: intervals)`) this port just decided to drop, so
+forking it means immediately deleting half of what was forked. (B) hand-write the whole
+GATK4 chain from raw processes, ignoring sarek entirely — rejected, throws away sarek's
+already-tested module wiring (correct args, containers, output globs) for no reason, and
+contradicts §2's explicit direction to reuse sarek rather than re-porting all 19
+`JointGeno_Tasks.1.wdl` tasks by hand. **Resolved (C, confirmed with the dev)**: vendor the
+individual nf-core modules unmodified into `modules/nf-core/`, and write a new, simple
+local subworkflow (`JOINT_GENOTYPING`) that calls them in WDL order with our own no-scatter
+wiring — reusing exactly the part of sarek worth reusing (the GATK tool wrappers) while
+writing only the orchestration ourselves, which is now cheap with scatter out of scope.
+
+**Parabricks version — sarek's current default.** No known org precedent to match (asked
+directly); `nvcr.io/nvidia/clara/clara-parabricks:4.7.1-1` is what the vendored sarek
+modules currently pin, and matching the modules we're vendoring is the safer default over
+guessing at an org-wide standard that may not exist yet.
+
+**GATK4 version for the joint-genotyping modules — pinned to 4.2.6.1 for now.** The
+vendored nf-core modules default to whatever GATK4 version sarek currently ships, likely
+newer than the WDL's 4.2.6.1. **Resolved (confirmed with the dev)**: override each
+vendored GATK4 module's container to 4.2.6.1 via `nextflow.config`, matching the WDL
+exactly and keeping one GATK version across the whole pipeline (consistent with §7's
+CNV-half resolution). The dev flagged this as provisional — a candidate for an org-wide
+GATK version bump later, revisited outside this port's scope.
+
+### 12.7 Testing & accepted gaps
+
+Same posture as Phase 1/1.5: no real fixture data, write code only. Adds a third accepted
+gap alongside the two already open (§10 point 1's fixture data, the unpushed R container):
+no real Parabricks/NGC execution has been validated, since neither the dev's nor this
+session's environment has GPU/NGC access. `PARABRICKS_HAPLOTYPECALLER`'s vendored module
+already ships a `stub {}` block (verified by reading it directly), so `SAMPLE_GERMLINE_CALLING`'s
+wiring gets tested via nf-test's `-stub-run` rather than a real GPU run. The GATK4 modules
+in `JOINT_GENOTYPING` use public containers, so those may run for real in nf-test if
+Docker/network access allows during implementation — verify empirically rather than assume
+(this pipeline's own precedent: the CRLF/shebang bug and the `--clin` flag both turned out
+differently than assumed until actually checked against the real thing).
