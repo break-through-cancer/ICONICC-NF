@@ -17,6 +17,18 @@ workflow JOINT_GENOTYPING {
     indel_resources_ch   // [ [vcf,vcf,vcf], [tbi,tbi,tbi], [label,label,label] ]
 
     main:
+    // .first() hardens these as value channels: each is documented as a single-value
+    // channel in the take: comments above, but nothing previously enforced that. If a
+    // caller passes a queue channel holding one item instead (e.g. main.nf's ref_fasta_ch
+    // built via Channel.of([fasta, fai, dict])), every step after GenomicsDBImport would
+    // otherwise run exactly once total regardless of how many pairs are in flight --
+    // silently dropping every pair after the first, with no error. .first() is a no-op
+    // when the channel is already a value channel.
+    ref_fasta_ch       = ref_fasta_ch.first()
+    dbsnp_ch           = dbsnp_ch.first()
+    snp_resources_ch   = snp_resources_ch.first()
+    indel_resources_ch = indel_resources_ch.first()
+
     // No interval scatter (SPEC.md Sec12.6): every step below runs once per pair over the
     // whole calling_intervals region. This is why there is no BCFTOOLS_SORT/MergeVcfs step
     // -- GenotypeGVCFs already emits one complete, sorted VCF, nothing to reassemble.
