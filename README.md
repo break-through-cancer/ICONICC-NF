@@ -14,10 +14,10 @@ See `SPEC.md` for the full design. Two logical halves:
 
 ## Local usage
 
-`main.nf` takes a single samplesheet, driving the germline read-counting and
-`CNV_CORE` subworkflows for every tumor/normal pair it describes. Every reference
-file has a working default in `nextflow.config` and only needs an override to point
-somewhere else.
+`main.nf` takes a single samplesheet, driving the germline read-counting,
+`SAMPLE_GERMLINE_CALLING`, `JOINT_GENOTYPING`, and `CNV_CORE` subworkflows for every
+tumor/normal pair it describes. Every reference file has a working default in
+`nextflow.config` and only needs an override to point somewhere else.
 
 ```bash
 nextflow run main.nf --input samplesheet.csv

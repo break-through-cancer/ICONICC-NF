@@ -500,8 +500,9 @@ needed, exactly as §5 already specified. Restricts calling to the WDL's own
 assembly-gap regions aren't wastefully processed — but does **not** split that file into
 shards (see decision log: no interval scatter for v1). Output: `[meta(patient, sample,
 sex, status), gvcf, gvcf_tbi]` — one GVCF per unique sample, `.tbi`-indexed via a
-`TABIX_TABIX` step alongside the Parabricks call, since `PARABRICKS_HAPLOTYPECALLER`
-itself emits `.g.vcf.gz` without an index.
+local `INDEX_GVCF` module (bcftools-based, `modules/local/index_gvcf.nf`) alongside
+the Parabricks call, since `PARABRICKS_HAPLOTYPECALLER` itself emits `.g.vcf.gz`
+without an index.
 
 ### 12.3 `JOINT_GENOTYPING` (new, pair-scoped)
 
