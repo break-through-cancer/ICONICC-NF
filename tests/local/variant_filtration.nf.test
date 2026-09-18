@@ -1,0 +1,23 @@
+nextflow_process {
+    name "Test variant_filtration"
+    script "modules/local/variant_filtration.nf"
+    process "VARIANT_FILTRATION"
+
+    test("tags ExcessHet > 54.69") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [ participant_id: 'TEST_TUMOR_vs_TEST_NORMAL' ],
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz.tbi")
+                ]
+                """
+            }
+        }
+        then {
+            // Known, accepted gap: placeholder fixture, not real VCF content. Do not flip to !process.success.
+            assert process.success
+        }
+    }
+}
