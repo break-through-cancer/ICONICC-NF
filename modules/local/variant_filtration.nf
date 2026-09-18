@@ -20,4 +20,10 @@ process VARIANT_FILTRATION {
         -O ${meta.participant_id}.variant_filtered.vcf.gz \\
         -V ${vcf}
     """
+
+    stub:
+    """
+    touch ${meta.participant_id}.variant_filtered.vcf.gz
+    touch ${meta.participant_id}.variant_filtered.vcf.gz.tbi
+    """
 }

@@ -18,4 +18,10 @@ process MAKE_SITES_ONLY_VCF {
         -I ${vcf} \\
         -O ${meta.participant_id}.sites_only.vcf.gz
     """
+
+    stub:
+    """
+    touch ${meta.participant_id}.sites_only.vcf.gz
+    touch ${meta.participant_id}.sites_only.vcf.gz.tbi
+    """
 }

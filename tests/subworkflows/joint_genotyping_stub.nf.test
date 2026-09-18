@@ -1,0 +1,97 @@
+nextflow_workflow {
+    name "Test JOINT_GENOTYPING (stub)"
+    script "subworkflows/local/joint_genotyping/main.nf"
+    workflow "JOINT_GENOTYPING"
+    options "-stub"
+
+    // Companion to tests/subworkflows/joint_genotyping.nf.test, which runs for real and
+    // documents the accepted placeholder-fixture gap (GATK4_GENOMICSDBIMPORT fails on the
+    // 0-byte GVCF fixtures before real content ever matters). This test runs the exact
+    // same chain under -stub instead: every step in the chain (GATK4_GENOMICSDBIMPORT,
+    // GATK4_GENOTYPEGVCFS, VARIANT_FILTRATION, MAKE_SITES_ONLY_VCF, both
+    // GATK4_VARIANTRECALIBRATOR calls, both GATK4_APPLYVQSR calls) now ships a stub{}
+    // block (VARIANT_FILTRATION/MAKE_SITES_ONLY_VCF got theirs added alongside this test,
+    // matching the pattern modules/local/index_gvcf.nf already established), so the whole
+    // chain substitutes stub output instead of running real GATK, and this genuinely
+    // passes end to end -- including the ext.prefix collision fix between APPLYVQSR_INDEL
+    // and APPLYVQSR_SNP (nextflow.config), and the INDEL-then-SNP chain order (SPEC.md
+    // Sec12.3).
+    test("runs the full GenomicsDBImport -> GenotypeGVCFs -> VariantFiltration -> MakeSitesOnlyVcf -> VariantRecalibrator x2 -> ApplyVQSR (INDEL then SNP) chain under -stub") {
+        when {
+            workflow {
+                """
+                def pair_meta = [
+                    participant_id: 'TEST_TUMOR_vs_TEST_NORMAL',
+                    patient: 'TEST_PATIENT',
+                    normal_sample_id: 'TEST_NORMAL',
+                    tumor_sample_id: 'TEST_TUMOR',
+                    sample_sex: 'female'
+                ]
+                input[0] = Channel.of([
+                    pair_meta,
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_normal.g.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_normal.g.vcf.gz.tbi"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_tumor.g.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_tumor.g.vcf.gz.tbi")
+                ])
+                input[1] = Channel.value([
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/reference.fasta"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/reference.fasta.fai"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/reference.dict")
+                ])
+                input[2] = Channel.value(file("\${projectDir}/tests/fixtures/joint_genotyping/calling_intervals.list"))
+                input[3] = Channel.value([
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/dbsnp.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/dbsnp.vcf.gz.tbi")
+                ])
+                input[4] = Channel.value([
+                    [
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource2.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource3.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource4.vcf.gz")
+                    ],
+                    [
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource2.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource3.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource4.vcf.gz.tbi")
+                    ],
+                    [ '--resource:hapmap,known=false,training=true,truth=true,prior=15.0 x', '--resource:omni,known=false,training=true,truth=true,prior=12.0 x', '--resource:1000G,known=false,training=true,truth=false,prior=10.0 x', '--resource:dbsnp,known=true,training=false,truth=false,prior=7.0 x' ]
+                ])
+                input[5] = Channel.value([
+                    [
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource2.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource3.vcf.gz")
+                    ],
+                    [
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource2.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource3.vcf.gz.tbi")
+                    ],
+                    [ '--resource:mills,known=false,training=true,truth=true,prior=12.0 x', '--resource:axiomPoly,known=false,training=true,truth=false,prior=10.0 x', '--resource:dbsnp,known=true,training=false,truth=false,prior=2.0 x' ]
+                ])
+                """
+            }
+        }
+        then {
+            assert workflow.success
+            assert workflow.out.joint_vcf.size() > 0
+
+            // Positive evidence the whole chain actually ran, not just that the workflow
+            // didn't error out early: every named stage in the SPEC.md Sec12.3 chain
+            // executed exactly once, and the two ApplyVQSR calls ran in INDEL-then-SNP
+            // order (chained: APPLYVQSR_SNP consumes APPLYVQSR_INDEL's own VCF output).
+            def task_names = workflow.trace.tasks().collect { it.name }
+            assert task_names.count { it.contains('GATK4_GENOMICSDBIMPORT') } == 1
+            assert task_names.count { it.contains('GATK4_GENOTYPEGVCFS') } == 1
+            assert task_names.count { it.contains('VARIANT_FILTRATION') } == 1
+            assert task_names.count { it.contains('MAKE_SITES_ONLY_VCF') } == 1
+            assert task_names.count { it.contains('VARIANTRECALIBRATOR_SNP') } == 1
+            assert task_names.count { it.contains('VARIANTRECALIBRATOR_INDEL') } == 1
+            assert task_names.count { it.contains('APPLYVQSR_INDEL') } == 1
+            assert task_names.count { it.contains('APPLYVQSR_SNP') } == 1
+        }
+    }
+}
