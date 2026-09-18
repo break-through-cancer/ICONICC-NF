@@ -19,18 +19,15 @@ nextflow_workflow {
             }
         }
         then {
-            // Asserts the desired end state, the same convention as
-            // tests/local/index_gvcf.nf.test and tests/subworkflows/sample_read_counts.nf.test:
-            // this FAILS today on a known, accepted gap that is a variant of the one already
-            // documented in tests/local/index_gvcf.nf.test (SPEC.md Sec12.7) -- PARABRICKS_HAPLOTYPECALLER
-            // ships a stub{} block (`echo '' | gzip > *.g.vcf.gz`), but INDEX_GVCF does not, so under
-            // -stub the module's fake gvcf is real plain gzip, not BGZF, and INDEX_GVCF's real
-            // bcftools index invocation aborts with "the file is not BGZF compressed" before either
-            // real content or real pbrun output ever matters. This is a channel-wiring test only;
-            // fixing it requires either a stub{} block on INDEX_GVCF or a real BGZF-producing
-            // PARABRICKS run, both out of this task's two-file scope. Do not "fix" it by flipping to
-            // !workflow.success: that reports green today for the wrong reason and turns red exactly
-            // when the pipeline becomes correct.
+            // Genuinely green: both PARABRICKS_HAPLOTYPECALLER and INDEX_GVCF substitute
+            // their stub{} blocks under -stub, so this exercises the real channel wiring
+            // (one call per unique sample, correct meta + [id: meta.sample] tagging) without
+            // needing a GPU or real GATK/bcftools content. INDEX_GVCF's stub{} block was
+            // added alongside this test (modules/local/index_gvcf.nf) specifically so this
+            // subworkflow-level test would not fall through to INDEX_GVCF's real script and
+            // fail on the unrelated placeholder-content gap that tests/local/index_gvcf.nf.test
+            // documents on its own (that test never passes -stub, so it is unaffected and
+            // still correctly fails the same documented way).
             assert workflow.success
             assert workflow.out.sample_gvcfs.size() == 2
         }

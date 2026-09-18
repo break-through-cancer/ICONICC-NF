@@ -15,4 +15,9 @@ process INDEX_GVCF {
     set -euo pipefail
     bcftools index --tbi ${gvcf}
     """
+
+    stub:
+    """
+    touch ${gvcf}.tbi
+    """
 }
