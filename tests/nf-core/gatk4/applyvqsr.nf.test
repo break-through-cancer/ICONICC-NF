@@ -16,9 +16,9 @@ nextflow_process {
                     file("\${projectDir}/tests/fixtures/joint_genotyping/recal.idx"),
                     file("\${projectDir}/tests/fixtures/joint_genotyping/recal.tranches")
                 ]
-                input[1] = file(params.ref_fasta)
-                input[2] = file(params.ref_fasta_fai)
-                input[3] = file(params.ref_fasta_dict)
+                input[1] = file("\${projectDir}/tests/fixtures/joint_genotyping/reference.fasta")
+                input[2] = file("\${projectDir}/tests/fixtures/joint_genotyping/reference.fasta.fai")
+                input[3] = file("\${projectDir}/tests/fixtures/joint_genotyping/reference.dict")
                 """
             }
         }

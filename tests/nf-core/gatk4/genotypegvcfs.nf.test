@@ -15,11 +15,11 @@ nextflow_process {
                     file(params.calling_intervals),
                     []
                 ]
-                input[1] = [ [ id: 'reference' ], file(params.ref_fasta) ]
-                input[2] = [ [ id: 'reference' ], file(params.ref_fasta_fai) ]
-                input[3] = [ [ id: 'reference' ], file(params.ref_fasta_dict) ]
-                input[4] = [ [ id: 'reference' ], file(params.dbsnp_vcf) ]
-                input[5] = [ [ id: 'reference' ], file(params.dbsnp_vcf_index) ]
+                input[1] = [ [ id: 'reference' ], file("\${projectDir}/tests/fixtures/joint_genotyping/reference.fasta") ]
+                input[2] = [ [ id: 'reference' ], file("\${projectDir}/tests/fixtures/joint_genotyping/reference.fasta.fai") ]
+                input[3] = [ [ id: 'reference' ], file("\${projectDir}/tests/fixtures/joint_genotyping/reference.dict") ]
+                input[4] = [ [ id: 'reference' ], file("\${projectDir}/tests/fixtures/joint_genotyping/dbsnp.vcf.gz") ]
+                input[5] = [ [ id: 'reference' ], file("\${projectDir}/tests/fixtures/joint_genotyping/dbsnp.vcf.gz.tbi") ]
                 """
             }
         }

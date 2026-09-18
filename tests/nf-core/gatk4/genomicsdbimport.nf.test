@@ -12,7 +12,7 @@ nextflow_process {
                     [ id: 'TEST_PAIR' ],
                     [ file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_normal.g.vcf.gz"), file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_tumor.g.vcf.gz") ],
                     [ file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_normal.g.vcf.gz.tbi"), file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_tumor.g.vcf.gz.tbi") ],
-                    file(params.calling_intervals),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/calling_intervals.list"),
                     [],
                     []
                 ]

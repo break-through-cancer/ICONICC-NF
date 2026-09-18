@@ -11,7 +11,7 @@ nextflow_process {
                 input[0] = [
                     [ id: 'TEST_PAIR' ],
                     file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz"),
-                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz")
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz.tbi")
                 ]
                 input[1] = [
                     file("\${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz"),
@@ -31,9 +31,9 @@ nextflow_process {
                     '--resource:1000G,known=false,training=true,truth=false,prior=10.0 ref_fasta',
                     '--resource:dbsnp,known=true,training=false,truth=false,prior=7.0 ref_fasta'
                 ]
-                input[4] = file(params.ref_fasta)
-                input[5] = file(params.ref_fasta_fai)
-                input[6] = file(params.ref_fasta_dict)
+                input[4] = file("\${projectDir}/tests/fixtures/joint_genotyping/reference.fasta")
+                input[5] = file("\${projectDir}/tests/fixtures/joint_genotyping/reference.fasta.fai")
+                input[6] = file("\${projectDir}/tests/fixtures/joint_genotyping/reference.dict")
                 """
             }
         }
