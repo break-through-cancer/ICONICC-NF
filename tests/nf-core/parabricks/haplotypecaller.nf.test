@@ -1,0 +1,27 @@
+nextflow_process {
+    name "Test PARABRICKS_HAPLOTYPECALLER (stub)"
+    script "modules/nf-core/parabricks/haplotypecaller/main.nf"
+    process "PARABRICKS_HAPLOTYPECALLER"
+    options "-stub"
+    config "tests/nf-core/parabricks/haplotypecaller.nf.config"
+
+    test("emits a GVCF via the module's stub block -- this dev environment has no NVIDIA GPU, confirmed, so real pbrun execution is never attempted here") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [ id: 'TEST_SAMPLE' ],
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz"),
+                    [],
+                    []
+                ]
+                input[1] = [ [ id: 'reference' ], file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.fasta") ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert process.out.gvcf.size() == 1
+        }
+    }
+}

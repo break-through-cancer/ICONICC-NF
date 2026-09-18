@@ -12,6 +12,8 @@ tests/fixtures/cnv_core/*
 !tests/fixtures/cnv_core/README.md
 # samplesheet_to_pairs fixtures ARE committed (tiny placeholders, not real genomic data)
 !tests/fixtures/samplesheet_to_pairs/
+# joint_genotyping fixtures ARE committed (tiny placeholders, not real genomic data)
+!tests/fixtures/joint_genotyping/
 
 # R
 .Rproj.user/

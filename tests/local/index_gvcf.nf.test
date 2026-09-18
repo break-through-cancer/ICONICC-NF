@@ -1,0 +1,26 @@
+nextflow_process {
+    name "Test index_gvcf"
+    script "modules/local/index_gvcf.nf"
+    process "INDEX_GVCF"
+
+    test("indexes a GVCF with bcftools") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [ patient: 'PT01', sample: 'PT01_normal' ],
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz")
+                ]
+                """
+            }
+        }
+        then {
+            // Known, accepted gap (SPEC.md §12.7, Global Constraints above): the fixture
+            // is a 0-byte placeholder, not a real bgzipped GVCF, so bcftools fails with a
+            // named "not a BGZF file"-class error before real content ever matters. Real
+            // fixture data closes this the same way it closes tests/subworkflows/cnv_core.nf.test.
+            // Do not flip this to !process.success.
+            assert process.success
+        }
+    }
+}
