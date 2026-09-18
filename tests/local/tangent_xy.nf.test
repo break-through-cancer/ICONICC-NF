@@ -1,0 +1,25 @@
+nextflow_process {
+    name "Test tangent_xy"
+    script "modules/local/tangent_xy.nf"
+    process "TANGENT_XY"
+
+    test("normalizes tumor depth against the external PoN") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT', normal_sample_id: 'TEST_NORMAL', tumor_sample_id: 'TEST_TUMOR', sample_sex: 'female', scale_method: 'median', fix_outliers: false, trailingN: 5, n_dim: 10],
+                    file("\${projectDir}/tests/fixtures/cnv_core/TEST_TUMOR_counts.txt"),
+                    file(params.pon),
+                    file(params.ref_clinical),
+                    file(params.cohort_clinical)
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert path(process.out[0].get(0)[1]).exists()
+        }
+    }
+}
