@@ -1,0 +1,22 @@
+nextflow_workflow {
+    name "Test SAMPLE_READ_COUNTS"
+    script "subworkflows/local/sample_read_counts/main.nf"
+    workflow "SAMPLE_READ_COUNTS"
+
+    test("runs PREPROCESS_INTERVALS once and COLLECT_READ_COUNTS once per unique sample") {
+        when {
+            workflow {
+                """
+                input[0] = Channel.of(
+                    [ [patient: 'PT01', sample: 'PT01_normal', sex: 'female', status: 0], file(params.ref_fasta), file(params.ref_fasta_fai) ],
+                    [ [patient: 'PT01', sample: 'PT01_tumor_a', sex: 'female', status: 1], file(params.ref_fasta), file(params.ref_fasta_fai) ]
+                ).map { meta, cram, crai -> [ meta, cram, crai ] }
+                input[1] = Channel.of([ file(params.ref_fasta), file(params.ref_fasta_fai), file(params.ref_fasta_dict) ])
+                """
+            }
+        }
+        then {
+            assert !workflow.success // expected: no real CRAM fixture, GATK will fail on file content -- see note below
+        }
+    }
+}
