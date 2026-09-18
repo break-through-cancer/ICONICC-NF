@@ -1,0 +1,22 @@
+nextflow_process {
+    name "Test index_phased"
+    script "modules/local/index_phased.nf"
+    process "INDEX_PHASED"
+
+    test("tabix-indexes each phased VCF") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT'],
+                    files("\${projectDir}/tests/fixtures/cnv_core/phased/*_het_eagle2phased.vcf.gz")
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert path(process.out[0].get(0)[1]).size() == 23
+        }
+    }
+}
