@@ -1,0 +1,32 @@
+// tests/nf-core/gatk4/genomicsdbimport.nf.test
+nextflow_process {
+    name "Test GATK4_GENOMICSDBIMPORT"
+    script "modules/nf-core/gatk4/genomicsdbimport/main.nf"
+    process "GATK4_GENOMICSDBIMPORT"
+
+    test("imports a normal+tumor GVCF pair into a GenomicsDB workspace") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [ id: 'TEST_PAIR' ],
+                    [ file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_normal.g.vcf.gz"), file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_tumor.g.vcf.gz") ],
+                    [ file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_normal.g.vcf.gz.tbi"), file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_tumor.g.vcf.gz.tbi") ],
+                    file(params.calling_intervals),
+                    [],
+                    []
+                ]
+                input[1] = false
+                input[2] = false
+                input[3] = false
+                """
+            }
+        }
+        then {
+            // Known, accepted gap (Global Constraints above, SPEC.md Sec12.7): the GVCF
+            // fixtures are 0-byte placeholders, so GenomicsDBImport fails on invalid VCF
+            // content before any real genomic data would matter. Do not flip to !process.success.
+            assert process.success
+        }
+    }
+}

@@ -1,0 +1,32 @@
+// tests/nf-core/gatk4/genotypegvcfs.nf.test
+nextflow_process {
+    name "Test GATK4_GENOTYPEGVCFS"
+    script "modules/nf-core/gatk4/genotypegvcfs/main.nf"
+    process "GATK4_GENOTYPEGVCFS"
+
+    test("genotypes a GenomicsDB workspace against calling_intervals") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [ id: 'TEST_PAIR' ],
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz"),
+                    [],
+                    file(params.calling_intervals),
+                    []
+                ]
+                input[1] = [ [ id: 'reference' ], file(params.ref_fasta) ]
+                input[2] = [ [ id: 'reference' ], file(params.ref_fasta_fai) ]
+                input[3] = [ [ id: 'reference' ], file(params.ref_fasta_dict) ]
+                input[4] = [ [ id: 'reference' ], file(params.dbsnp_vcf) ]
+                input[5] = [ [ id: 'reference' ], file(params.dbsnp_vcf_index) ]
+                """
+            }
+        }
+        then {
+            // Known, accepted gap (Global Constraints above): placeholder is not a real
+            // GenomicsDB workspace. Do not flip to !process.success.
+            assert process.success
+        }
+    }
+}

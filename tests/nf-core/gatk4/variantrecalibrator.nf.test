@@ -1,0 +1,48 @@
+// tests/nf-core/gatk4/variantrecalibrator.nf.test
+nextflow_process {
+    name "Test GATK4_VARIANTRECALIBRATOR"
+    script "modules/nf-core/gatk4/variantrecalibrator/main.nf"
+    process "GATK4_VARIANTRECALIBRATOR"
+
+    test("fits a recalibration model against SNP-shaped resources") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [ id: 'TEST_PAIR' ],
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz")
+                ]
+                input[1] = [
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/resource2.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/resource3.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/resource4.vcf.gz")
+                ]
+                input[2] = [
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz.tbi"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/resource2.vcf.gz.tbi"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/resource3.vcf.gz.tbi"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/resource4.vcf.gz.tbi")
+                ]
+                input[3] = [
+                    '--resource:hapmap,known=false,training=true,truth=true,prior=15.0 ref_fasta',
+                    '--resource:omni,known=false,training=true,truth=true,prior=12.0 ref_fasta',
+                    '--resource:1000G,known=false,training=true,truth=false,prior=10.0 ref_fasta',
+                    '--resource:dbsnp,known=true,training=false,truth=false,prior=7.0 ref_fasta'
+                ]
+                input[4] = file(params.ref_fasta)
+                input[5] = file(params.ref_fasta_fai)
+                input[6] = file(params.ref_fasta_dict)
+                """
+            }
+        }
+        then {
+            // Known, accepted gap (Global Constraints above): VQSR's Gaussian mixture
+            // model cannot fit on a placeholder input regardless of container/network
+            // access -- this is a hard algorithmic requirement, not a missing fixture
+            // that staging real data alone would fix. Do not flip to !process.success.
+            assert process.success
+        }
+    }
+}

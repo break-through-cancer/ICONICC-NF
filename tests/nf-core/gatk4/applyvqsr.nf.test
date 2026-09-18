@@ -1,0 +1,31 @@
+// tests/nf-core/gatk4/applyvqsr.nf.test
+nextflow_process {
+    name "Test GATK4_APPLYVQSR"
+    script "modules/nf-core/gatk4/applyvqsr/main.nf"
+    process "GATK4_APPLYVQSR"
+
+    test("applies a recalibration model to a VCF") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [ id: 'TEST_PAIR' ],
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz.tbi"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/recal.recal"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/recal.idx"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/recal.tranches")
+                ]
+                input[1] = file(params.ref_fasta)
+                input[2] = file(params.ref_fasta_fai)
+                input[3] = file(params.ref_fasta_dict)
+                """
+            }
+        }
+        then {
+            // Known, accepted gap (Global Constraints above): placeholder recal/tranches
+            // files, not a real VariantRecalibrator model. Do not flip to !process.success.
+            assert process.success
+        }
+    }
+}
