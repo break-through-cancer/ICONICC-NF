@@ -1,0 +1,23 @@
+nextflow_process {
+    name "Test hetvar_filter"
+    script "modules/local/hetvar_filter.nf"
+    process "HETVAR_FILTER"
+
+    test("keeps only tumor-het sites with adequate depth") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT'],
+                    files("${projectDir}/tests/fixtures/cnv_core/chr_outputs/*_var.vcf.gz"),
+                    files("${projectDir}/tests/fixtures/cnv_core/chr_outputs/*_var.vcf.gz.tbi")
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert path(process.out[0].get(0)[1]).size() == 23
+        }
+    }
+}
