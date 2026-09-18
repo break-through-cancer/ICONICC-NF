@@ -1,0 +1,53 @@
+nextflow_workflow {
+    name "Test CNV_CORE end-to-end against a known-good WDL run"
+    script "subworkflows/local/cnv_core/main.nf"
+    workflow "CNV_CORE"
+
+    test("produces all five final outputs from a real joint VCF + CRAM pair") {
+        when {
+            workflow {
+                """
+                def meta = [
+                    participant_id: params.fixture_participant_id,
+                    normal_sample_id: params.fixture_normal_id,
+                    tumor_sample_id: params.fixture_tumor_id,
+                    sample_sex: params.fixture_sample_sex,
+                    scale_method: 'median', fix_outliers: false, trailingN: 5, n_dim: 10,
+                    smooth_region: 10, outlier_SD: 4, smooth_SD: 2, alpha: 0.01, min_width: 2,
+                    undo_split: 'none', undo_prune: 0.05, undo_SD: 2, recovery_thresh: 20,
+                    use_het: true, miss_thresh: 1.0, agg_bins: false, desired_binsize: null
+                ]
+                input[0] = Channel.of([
+                    meta,
+                    file("\${projectDir}/tests/fixtures/cnv_core/joint.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/cnv_core/joint.vcf.gz.tbi")
+                ])
+                input[1] = Channel.of([
+                    meta,
+                    file("\${projectDir}/tests/fixtures/cnv_core/tumor.recal.cram"),
+                    file("\${projectDir}/tests/fixtures/cnv_core/tumor.recal.cram.crai")
+                ])
+                input[2] = Channel.of([
+                    meta,
+                    file("\${projectDir}/tests/fixtures/cnv_core/normal.recal.cram"),
+                    file("\${projectDir}/tests/fixtures/cnv_core/normal.recal.cram.crai")
+                ])
+                input[3] = Channel.of([ file(params.ref_fasta), file(params.ref_fasta_fai), file(params.ref_fasta_dict) ])
+                input[4] = Channel.value(file(params.ref_dir_1000g))
+                input[5] = Channel.value(file(params.genetic_map))
+                input[6] = Channel.value(file(params.pon))
+                input[7] = Channel.value(file(params.ref_clinical))
+                input[8] = Channel.value(file(params.cohort_clinical))
+                """
+            }
+        }
+        then {
+            assert workflow.success
+            assert workflow.out.read_depth
+            assert workflow.out.seg_file
+            assert workflow.out.ac_cts
+            assert workflow.out.segment_plots
+            assert workflow.out.segment_cts
+        }
+    }
+}

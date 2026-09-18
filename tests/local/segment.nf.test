@@ -1,0 +1,23 @@
+nextflow_process {
+    name "Test segment"
+    script "modules/local/segment.nf"
+    process "SEGMENT"
+
+    test("segments allelic counts against tangent-normalized depth") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT', sample_sex: 'female', smooth_region: 10, outlier_SD: 4, smooth_SD: 2, alpha: 0.01, min_width: 2, undo_split: 'none', undo_prune: 0.05, undo_SD: 2, recovery_thresh: 20, use_het: true, miss_thresh: 1.0],
+                    file("\${projectDir}/tests/fixtures/cnv_core/TEST_PT_allelic_counts.txt"),
+                    file("\${projectDir}/tests/fixtures/cnv_core/posttangent_log2.rds")
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert path(process.out[0].get(0)[1]).exists()
+        }
+    }
+}
