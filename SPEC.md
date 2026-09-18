@@ -175,7 +175,7 @@ ICONICC's actual defaults (`ICONICC_paired.3.wdl` input block) vs sarek's hardco
 | `ExcessHet` hard-filter (54.69) | present (`HardFilterAndMakeSitesOnlyVcf`) | step doesn't exist in sarek | No equivalent at all — decide whether to add a standalone `VariantFiltration` step or drop it (needs a call: is 54.69 a deliberately-tuned value or an inherited Broad-template default nobody revisited?) |
 | `use_gnarly_genotyper` | defaults `false` | N/A, not implemented in sarek | Moot at ICONICC's actual default |
 | `use_allele_specific_annotations` | defaults `false` | N/A, sarek's VQSR args are fixed non-AS | Moot at ICONICC's actual default |
-| Tranche value lists | explicit custom lists | none passed, GATK tool built-in default applies | Not verified identical — diff directly if exact reproducibility matters |
+| Tranche value lists | explicit custom lists | none passed, GATK tool built-in default applies | **Now verified** (§12.3): use ICONICC's exact literal lists, not sarek's tool-default behavior |
 
 Override mechanism: `process { withName: 'VARIANTRECALIBRATOR_SNP' { ext.args = '...' } }`
 in this pipeline's own compute config — same override pattern already proven for the
@@ -517,9 +517,19 @@ GenomicsDBImport(normal_gvcf, tumor_gvcf, calling_intervals)
   → MakeSitesOnlyVcf                                   (training input only, not the final VCF)
   → VariantRecalibrator(SNP, on sites-only)  ┐
   → VariantRecalibrator(INDEL, on sites-only)┘
-  → ApplyVQSR(SNP)  → ApplyVQSR(INDEL, chained on SNP's output)
+  → ApplyVQSR(INDEL)  → ApplyVQSR(SNP, chained on INDEL's output)
   → [pair_meta, vcf, tbi]
 ```
+
+Chain order verified directly against `ICONICC_paired.3.wdl`'s `ApplyRecalibration` task
+(`JointGeno_Tasks.1.wdl:586-634`): **INDEL runs first, SNP second, chained on INDEL's
+output** — the reverse of sarek's own `BAM_JOINT_CALLING_GERMLINE_GATK` comment ("Step 1:
+ApplyVQSR to SNPs... Step 2: ...run ApplyVQSR_INDEL"), which this design initially copied
+without independently re-checking against the WDL. Caught while pulling exact `ext.args`
+values for the implementation plan — corrected here since each pass only tags its own
+variant type's FILTER field and passes the other type through untouched, so the final
+tags are equivalent either way, but WDL-order match is followed for exact parity with
+what has actually been running in production.
 
 Verified directly against `ICONICC_paired.3.wdl` (not inferred from sarek's subworkflow,
 which doesn't do this): `ApplyRecalibration`'s actual input — and therefore the *final*
@@ -535,6 +545,47 @@ No `BCFTOOLS_SORT`/`MergeVcfs` step: those exist in sarek's subworkflow purely t
 reassemble interval-scattered shards, and per the no-scatter decision below,
 `GenotypeGVCFs` runs once per pair over the whole `calling_intervals` region and already
 emits one complete, sorted VCF.
+
+**Exact `ext.args`/resource values** — read directly from `ICONICC_paired.3.wdl`'s own
+input-block defaults (lines 56-59) and confirmed unoverridden in the production Cirro
+config (`cirro/process-input.json` has no `*_tranche_values`/`*_annotation_values`/
+`*_filter_level` keys at all, so the WDL's embedded defaults are what production actually
+runs), resolving §5.1's "Tranche value lists... Not verified identical" row:
+
+```
+VARIANTRECALIBRATOR_SNP:
+  -tranche 100.0 -tranche 99.95 -tranche 99.9 -tranche 99.8 -tranche 99.6 -tranche 99.5
+  -tranche 99.4 -tranche 99.3 -tranche 99.0 -tranche 98.0 -tranche 97.0 -tranche 90.0
+  -an QD -an MQRankSum -an ReadPosRankSum -an FS -an MQ -an SOR -an DP
+  -mode SNP --max-gaussians 6 --trust-all-polymorphic
+  resource labels (prior values are literal WDL constants, GATK expects a trailing ".0"):
+    --resource:hapmap,known=false,training=true,truth=true,prior=15.0   hapmap_3.3.hg38.vcf.gz
+    --resource:omni,known=false,training=true,truth=true,prior=12.0     1000G_omni2.5.hg38.vcf.gz
+    --resource:1000G,known=false,training=true,truth=false,prior=10.0  1000G_phase1.snps.high_confidence.hg38.vcf.gz
+    --resource:dbsnp,known=true,training=false,truth=false,prior=7.0   Homo_sapiens_assembly38.dbsnp138.vcf
+
+VARIANTRECALIBRATOR_INDEL:
+  -tranche 100.0 -tranche 99.95 -tranche 99.9 -tranche 99.5 -tranche 99.0 -tranche 97.0
+  -tranche 96.0 -tranche 95.0 -tranche 94.0 -tranche 93.5 -tranche 93.0 -tranche 92.0
+  -tranche 91.0 -tranche 90.0
+  -an FS -an ReadPosRankSum -an MQRankSum -an QD -an SOR -an DP
+  -mode INDEL --max-gaussians 4 --trust-all-polymorphic
+  resource labels:
+    --resource:mills,known=false,training=true,truth=true,prior=12.0    Mills_and_1000G_gold_standard.indels.hg38.vcf.gz
+    --resource:axiomPoly,known=false,training=true,truth=false,prior=10.0 Axiom_Exome_Plus.genotypes.all_populations.poly.hg38.vcf.gz
+    --resource:dbsnp,known=true,training=false,truth=false,prior=2.0    Homo_sapiens_assembly38.dbsnp138.vcf
+
+APPLYVQSR_INDEL (first):  --truth-sensitivity-filter-level 99.0 -mode INDEL
+APPLYVQSR_SNP   (second): --truth-sensitivity-filter-level 99.7 -mode SNP
+```
+
+`use_allele_specific_annotations` stays `false` (§5.1, already resolved) — the
+`--use-allele-specific-annotations` flag is never passed, on either `VariantRecalibrator`
+call. `max-gaussians` (6 for SNP, 4 for INDEL) and `--trust-all-polymorphic` are WDL
+defaults carried over unconditionally — no decision needed, just literal reproduction.
+Resource file basenames match §12.5's params, following sarek's own convention
+(`conf/igenomes.config`) of hardcoding the label string with the reference file's literal
+basename rather than deriving it from a `path` value at runtime.
 
 ### 12.4 Samplesheet schema change
 
