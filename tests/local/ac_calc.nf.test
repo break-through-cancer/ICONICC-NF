@@ -1,0 +1,26 @@
+nextflow_process {
+    name "Test ac_calc"
+    script "modules/local/ac_calc.nf"
+    process "AC_CALC"
+
+    test("computes read depth and allelic counts (noagg path)") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT', normal_sample_id: 'TEST_NORMAL', tumor_sample_id: 'TEST_TUMOR', agg_bins: false, desired_binsize: null],
+                    file("\${projectDir}/tests/fixtures/cnv_core/TEST_TUMOR_counts.txt"),
+                    files("\${projectDir}/tests/fixtures/cnv_core/query/*.phasedGT.chr*.1.txt"),
+                    files("\${projectDir}/tests/fixtures/cnv_core/query/*.AD.chr*.txt"),
+                    files("\${projectDir}/tests/fixtures/cnv_core/query/*_HetInfo.txt")
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert path(process.out[0].get(0)[1]).exists()
+            assert path(process.out[0].get(0)[2]).exists()
+        }
+    }
+}
