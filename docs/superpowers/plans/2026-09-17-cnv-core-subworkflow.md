@@ -58,7 +58,9 @@ three R scripts (`reference/r-scripts/*.R`), and the task-mapping TSV
   scripts.
 - CNV R scripts (`ac_calc.R`, `tangent.R`, `segment.R`) run on a **freshly-built, versioned**
   image per the resolved decision (SPEC.md §7) — not a re-pin of `wchukwu/r-docker:latest`.
-  Built in `break-through-cancer/btc-containers` per that repo's own convention (Task 2).
+  Dockerfile lives in this repo at `containers/iconicc-cnv-r/` (Task 2); building and
+  publishing it is a manual step the dev does outside this plan (deliberate scope cut — see
+  Task 2 — to avoid an autonomous PR/merge into the shared `btc-containers` registry).
 - The three R scripts themselves are vendored into this repo's `bin/` directory (Nextflow
   puts `bin/` on `PATH` automatically) rather than fetched from S3 per-run via a `params.*`
   File input the way the WDL did — same scripts, version-locked with the pipeline code
@@ -157,19 +159,30 @@ git commit -m "Scaffold ICONICC-NF Nextflow pipeline"
 
 ---
 
-## Task 2: Build and publish the CNV R container
+## Task 2: Write the CNV R container Dockerfile (in this repo)
 
-This produces the container image every R-based process in this plan depends on
-(`ac_calc`, `tangent_xy`, `segment` — Tasks 12-14), so it has to land before those, but it's
-independent of the bcftools/GATK chain (Tasks 3-11) and can happen in parallel with them.
+This produces the Dockerfile every R-based process in this plan depends on (`ac_calc`,
+`tangent_xy`, `segment` — Tasks 12-14), so it has to land before those, but it's independent
+of the bcftools/GATK chain (Tasks 3-11) and can happen in parallel with them.
 
-**Files (in a separate clone of `break-through-cancer/btc-containers`, NOT this repo):**
-- Create: `btc-containers/iconicc-cnv-r/Dockerfile`
-- Modify: `btc-containers/.github/workflows/build-push-container.yml`
+**Deliberate scope cut (dev's call, not the spec's):** keep this entirely inside the
+`ICONICC-NF` repo — no cross-repo PR into the shared `break-through-cancer/btc-containers`
+registry. Building and publishing the image (`docker build` + push to wherever the dev wants
+— GHCR, ECR, `btc-containers` later) is a manual step the dev does on their own machine when
+ready; it's a side effect on shared infrastructure outside this repo, not something to
+automate here. To keep that decision from blocking Tasks 12-14, the R-based modules
+reference a **configurable** `params.cnv_r_container` (default: a local tag) rather than a
+hardcoded registry digest — the dev overrides it at runtime (`--cnv_r_container ...`) once
+the image is built and pushed somewhere real.
+
+**Files:**
+- Create: `containers/iconicc-cnv-r/Dockerfile`
+- Create: `containers/iconicc-cnv-r/README.md` (build/publish instructions for the dev)
+- Modify: `nextflow.config` (add `params.cnv_r_container` default)
 
 **Interfaces:**
-- Produces: a container image at `ghcr.io/break-through-cancer/btc-containers/iconicc-cnv-r`
-  that Tasks 12-14 reference by `container` directive.
+- Produces: `params.cnv_r_container` (default `'iconicc-cnv-r:latest'`), referenced by
+  every `container` directive in Tasks 12-14 instead of a literal image string.
 
 **Package inventory** (from grepping `library()`/`require()` calls across all three R
 scripts — see `reference/r-scripts/*.R`):
@@ -179,15 +192,7 @@ scripts — see `reference/r-scripts/*.R`):
 - Bioconductor: `rhdf5`, `rCGH`, `DNAcopy`, `GenomicRanges`
 - GitHub (not on CRAN/Bioconductor): `gUtils` (`mskilab-org/gUtils`)
 
-- [ ] **Step 1: Clone `btc-containers` fresh (separate from this repo)**
-
-```bash
-gh repo clone break-through-cancer/btc-containers /tmp/btc-containers
-cd /tmp/btc-containers
-git checkout -b add-iconicc-cnv-r
-```
-
-- [ ] **Step 2: Write the Dockerfile**
+- [ ] **Step 1: Write the Dockerfile**
 
 Pin the whole R environment to the Bioconductor 3.20 / R 4.4 release train (current at
 spec-writing time) via its base image, and CRAN packages to a frozen Posit Package Manager
@@ -195,7 +200,7 @@ snapshot dated to the same window, so `install.packages()` calls are themselves
 reproducible instead of always resolving "latest CRAN":
 
 ```dockerfile
-# mkdir -p /tmp/btc-containers/iconicc-cnv-r && write to iconicc-cnv-r/Dockerfile
+# containers/iconicc-cnv-r/Dockerfile
 FROM bioconductor/bioconductor_docker:RELEASE_3_20
 
 RUN echo 'options(repos = c(CRAN = "https://packagemanager.posit.co/cran/2025-01-15"))' \
@@ -213,32 +218,46 @@ RUN Rscript -e 'remotes::install_github( \
       "mskilab-org/gUtils@095377ab04195aecf6ebb8397072b24864c81599")'
 ```
 
-- [ ] **Step 3: Register the image in the build workflow**
+- [ ] **Step 2: Write a short README for the dev**
 
-Edit `.github/workflows/build-push-container.yml`:
-- Add `'iconicc-cnv-r/**'` to the `on.push.paths` list (alongside `'squidpy/**'`, etc.)
-- Add `"iconicc-cnv-r"` to the `known_images=(...)` bash array in the `detect-changes` job
+```markdown
+# containers/iconicc-cnv-r
 
-- [ ] **Step 4: Open a PR, verify the build, merge**
+R environment for the CNV/allelic-analysis core (`ac_calc.R`, `tangent.R`, `segment.R`).
+See `SPEC.md` §7 for the pinning rationale.
 
-```bash
-git add iconicc-cnv-r .github/workflows/build-push-container.yml
-git commit -m "Add iconicc-cnv-r container for the ICONICC Nextflow port's CNV core"
-git push -u origin add-iconicc-cnv-r
-gh pr create --title "Add iconicc-cnv-r container" --body "R environment for the ICONICC->Nextflow port's CNV/allelic-analysis core (ac_calc.R, tangent.R, segment.R). See break-through-cancer/ICONICC-NF SPEC.md §7."
-```
-
-Wait for the `build-push-container` check to pass on the PR (confirms the Dockerfile
-actually builds), then merge. **This step needs a human with merge rights** — hand off
-here if executing this plan as a subagent without repo write access.
-
-- [ ] **Step 5: Resolve and record the published digest**
+## Build and publish (manual — do this yourself when ready)
 
 ```bash
-docker buildx imagetools inspect ghcr.io/break-through-cancer/btc-containers/iconicc-cnv-r:latest
+docker build -t iconicc-cnv-r:latest containers/iconicc-cnv-r
+# then push wherever you want this to live, e.g.:
+#   docker tag iconicc-cnv-r:latest ghcr.io/<you>/iconicc-cnv-r:latest
+#   docker push ghcr.io/<you>/iconicc-cnv-r:latest
 ```
 
-Copy the resulting digest — it's used as the `container` directive value in Tasks 12-14.
+Then point the pipeline at it:
+
+```bash
+nextflow run main.nf --cnv_r_container ghcr.io/<you>/iconicc-cnv-r:latest ...
+```
+
+Until you've built and published it, `params.cnv_r_container` defaults to the local tag
+`iconicc-cnv-r:latest` — fine for local Docker testing, not resolvable in a remote executor.
+```
+
+- [ ] **Step 3: Wire the default param**
+
+```groovy
+// append to nextflow.config
+params.cnv_r_container = 'iconicc-cnv-r:latest'
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add containers/iconicc-cnv-r/Dockerfile containers/iconicc-cnv-r/README.md nextflow.config
+git commit -m "Add CNV R container Dockerfile (build/publish is a manual step for the dev)"
+```
 
 ---
 
@@ -1246,13 +1265,13 @@ Expected: FAIL
 
 - [ ] **Step 4: Implement the module**
 
-Replace `<ICONICC_CNV_R_IMAGE_DIGEST>` with the digest recorded in Task 2 Step 5:
+`container` uses `params.cnv_r_container` (Task 2), not a hardcoded image string:
 
 ```groovy
 // modules/local/ac_calc.nf
 process AC_CALC {
     tag "${meta.participant_id}"
-    container '<ICONICC_CNV_R_IMAGE_DIGEST>'
+    container params.cnv_r_container
     memory '4 GB'
 
     input:
@@ -1358,7 +1377,7 @@ Expected: FAIL
 ```groovy
 // modules/local/tangent_xy.nf
 process TANGENT_XY {
-    container '<ICONICC_CNV_R_IMAGE_DIGEST>'
+    container params.cnv_r_container
     memory '10 GB'
 
     input:
@@ -1460,7 +1479,7 @@ Expected: FAIL
 // modules/local/segment.nf
 process SEGMENT {
     tag "${meta.participant_id}"
-    container '<ICONICC_CNV_R_IMAGE_DIGEST>'
+    container params.cnv_r_container
     memory '10 GB'
 
     input:
