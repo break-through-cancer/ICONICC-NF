@@ -22,6 +22,7 @@ module will fail until these files are staged by hand.
 | `tumor.recal.cram` | The tumor sample's recalibrated CRAM from `sarek_align`, for the same run. |
 | `tumor.recal.cram.crai` | CRAM index for `tumor.recal.cram`. |
 | `sample_info.env` | Shell-sourceable file recording the real `PARTICIPANT_ID`, `NORMAL_SAMPLE_ID`, `TUMOR_SAMPLE_ID`, and `SAMPLE_SEX` for the staged run, so later tests use real IDs instead of placeholders. |
+| `wgs.preprocessed.interval_list` | Output of Task 4's `PREPROCESS_INTERVALS` module (GATK `PreprocessIntervals`), needed by `tests/local/collect_read_counts.nf.test`. Generate by running that module standalone against the reference fasta and copying its output here — not fetched from an external run. |
 
 ## How to stage them
 

@@ -1,0 +1,32 @@
+// This test needs wgs.preprocessed.interval_list staged in fixtures too — copy the
+// output of a manual `nextflow run` of Task 4's module (PREPROCESS_INTERVALS) into
+// tests/fixtures/cnv_core/, or run Task 4's process standalone and save its output
+// there. This is a real setup dependency, not a placeholder.
+nextflow_process {
+    name "Test collect_read_counts"
+    script "modules/local/collect_read_counts.nf"
+    process "COLLECT_READ_COUNTS"
+
+    test("produces a per-bin TSV read-counts file for the tumor CRAM") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT', normal_sample_id: 'TEST_NORMAL', tumor_sample_id: 'TEST_TUMOR'],
+                    'TEST_TUMOR',
+                    file("\${projectDir}/tests/fixtures/cnv_core/tumor.recal.cram"),
+                    file("\${projectDir}/tests/fixtures/cnv_core/tumor.recal.cram.crai"),
+                    file("\${projectDir}/tests/fixtures/cnv_core/wgs.preprocessed.interval_list"),
+                    file(params.ref_fasta),
+                    file(params.ref_fasta_fai),
+                    file(params.ref_fasta_dict)
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert path(process.out[0].get(0)[1]).exists()
+        }
+    }
+}
