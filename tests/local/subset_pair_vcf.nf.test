@@ -1,0 +1,24 @@
+nextflow_process {
+    name "Test subset_pair_vcf"
+    script "modules/local/subset_pair_vcf.nf"
+    process "SUBSET_PAIR_VCF"
+
+    test("subsets and reorders to normal,tumor") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT', normal_sample_id: 'TEST_NORMAL', tumor_sample_id: 'TEST_TUMOR'],
+                    file("\${projectDir}/tests/fixtures/cnv_core/joint.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/cnv_core/joint.vcf.gz.tbi")
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert path(process.out[0].get(0)[1]).exists()
+            assert path(process.out[0].get(0)[2]).exists()
+        }
+    }
+}

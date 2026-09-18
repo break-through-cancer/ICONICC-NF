@@ -6,7 +6,10 @@
 work/
 results/
 .nf-test*
-tests/fixtures/
+tests/fixtures/*
+!tests/fixtures/cnv_core/
+tests/fixtures/cnv_core/*
+!tests/fixtures/cnv_core/README.md
 
 # R
 .Rproj.user/
