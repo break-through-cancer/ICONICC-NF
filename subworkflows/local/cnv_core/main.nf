@@ -1,7 +1,4 @@
 include { SUBSET_PAIR_VCF     } from '../../../modules/local/subset_pair_vcf'
-include { PREPROCESS_INTERVALS } from '../../../modules/local/preprocess_intervals'
-include { COLLECT_READ_COUNTS as COLLECT_READ_COUNTS_TUMOR  } from '../../../modules/local/collect_read_counts'
-include { COLLECT_READ_COUNTS as COLLECT_READ_COUNTS_NORMAL } from '../../../modules/local/collect_read_counts'
 include { FILTER_VARIANTS     } from '../../../modules/local/filter_variants'
 include { ITER_ISEC           } from '../../../modules/local/iter_isec'
 include { HETVAR_FILTER       } from '../../../modules/local/hetvar_filter'
@@ -17,12 +14,13 @@ workflow CNV_CORE {
     joint_vcf_ch     // [ meta, joint_vcf, joint_vcf_index ] -- meta is the single uniform
                      // per-participant map used by every process below: participant_id,
                      // normal_sample_id, tumor_sample_id, sample_sex, agg_bins,
-                     // desired_binsize, and every tangent_xy/segment tuning field (Global
-                     // Constraints / Task 5's note). It must never be reshaped downstream
-                     // (only ever read from), so every .join() on `meta` below matches.
-    tumor_cram_ch    // [ meta, cram, crai ] -- same meta as joint_vcf_ch
-    normal_cram_ch   // [ meta, cram, crai ] -- same meta as joint_vcf_ch
-    ref_fasta_ch     // [ fasta, fai, dict ]
+                     // desired_binsize, and every tangent_xy/segment tuning field. It must
+                     // never be reshaped downstream (only ever read from), so every
+                     // .join() on `meta` below matches.
+    tumor_counts_ch  // [ meta, counts_file ] -- same meta as joint_vcf_ch. Pre-computed by
+                     // SAMPLE_READ_COUNTS (once per unique sample, before pairing) and
+                     // joined into this pair's meta by main.nf before calling CNV_CORE --
+                     // this subworkflow no longer computes read counts itself.
     ref_dir_1000g
     genetic_map
     pon
@@ -31,17 +29,6 @@ workflow CNV_CORE {
 
     main:
     SUBSET_PAIR_VCF(joint_vcf_ch)
-
-    PREPROCESS_INTERVALS(ref_fasta_ch)
-
-    COLLECT_READ_COUNTS_TUMOR(
-        tumor_cram_ch.combine(PREPROCESS_INTERVALS.out).combine(ref_fasta_ch)
-            .map { meta, cram, crai, intervals, fasta, fai, dict -> [ meta, meta.tumor_sample_id, cram, crai, intervals, fasta, fai, dict ] }
-    )
-    COLLECT_READ_COUNTS_NORMAL(
-        normal_cram_ch.combine(PREPROCESS_INTERVALS.out).combine(ref_fasta_ch)
-            .map { meta, cram, crai, intervals, fasta, fai, dict -> [ meta, meta.normal_sample_id, cram, crai, intervals, fasta, fai, dict ] }
-    )
 
     FILTER_VARIANTS(SUBSET_PAIR_VCF.out)
     ITER_ISEC(FILTER_VARIANTS.out.combine(ref_dir_1000g))
@@ -58,13 +45,13 @@ workflow CNV_CORE {
     QUERY_HET_AD(query_input)
 
     AC_CALC(
-        COLLECT_READ_COUNTS_TUMOR.out
+        tumor_counts_ch
             .join(QUERY_HET_AD.out)
             .map { meta, tumor_counts, hetinfo, ad, phased -> [ meta, tumor_counts, phased, ad, hetinfo ] }
     )
 
     TANGENT_XY(
-        COLLECT_READ_COUNTS_TUMOR.out
+        tumor_counts_ch
             .combine(pon).combine(ref_clinical).combine(cohort_clinical)
     )
 

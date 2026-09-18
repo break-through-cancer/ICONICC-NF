@@ -3,14 +3,10 @@ nextflow_workflow {
     script "subworkflows/local/cnv_core/main.nf"
     workflow "CNV_CORE"
 
-    test("produces all five final outputs from a real joint VCF + CRAM pair") {
+    test("produces all five final outputs from a real joint VCF + tumor counts") {
         when {
             workflow {
                 """
-                // Fail fast and legibly when the real fixture data has not been
-                // staged. Without this the run proceeds with null identifiers and
-                // dangling file() references, and dies much later inside a
-                // container with an opaque bcftools/htslib error.
                 assert params.fixture_participant_id != null : "CNV_CORE fixtures not staged: params.fixture_participant_id is null. Stage tests/fixtures/cnv_core/ and set the fixture_* params (see tests/fixtures/cnv_core/README.md)."
                 assert params.fixture_normal_id != null : "CNV_CORE fixtures not staged: params.fixture_normal_id is null. See tests/fixtures/cnv_core/README.md."
                 assert params.fixture_tumor_id != null : "CNV_CORE fixtures not staged: params.fixture_tumor_id is null. See tests/fixtures/cnv_core/README.md."
@@ -33,20 +29,13 @@ nextflow_workflow {
                 ])
                 input[1] = Channel.of([
                     meta,
-                    file("\${projectDir}/tests/fixtures/cnv_core/tumor.recal.cram"),
-                    file("\${projectDir}/tests/fixtures/cnv_core/tumor.recal.cram.crai")
+                    file("\${projectDir}/tests/fixtures/cnv_core/TEST_TUMOR_counts.txt")
                 ])
-                input[2] = Channel.of([
-                    meta,
-                    file("\${projectDir}/tests/fixtures/cnv_core/normal.recal.cram"),
-                    file("\${projectDir}/tests/fixtures/cnv_core/normal.recal.cram.crai")
-                ])
-                input[3] = Channel.of([ file(params.ref_fasta), file(params.ref_fasta_fai), file(params.ref_fasta_dict) ])
-                input[4] = Channel.value(file(params.ref_dir_1000g))
-                input[5] = Channel.value(file(params.genetic_map))
-                input[6] = Channel.value(file(params.pon))
-                input[7] = Channel.value(file(params.ref_clinical))
-                input[8] = Channel.value(file(params.cohort_clinical))
+                input[2] = Channel.value(file(params.ref_dir_1000g))
+                input[3] = Channel.value(file(params.genetic_map))
+                input[4] = Channel.value(file(params.pon))
+                input[5] = Channel.value(file(params.ref_clinical))
+                input[6] = Channel.value(file(params.cohort_clinical))
                 """
             }
         }
