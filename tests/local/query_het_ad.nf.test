@@ -1,0 +1,26 @@
+nextflow_process {
+    name "Test query_het_ad"
+    script "modules/local/query_het_ad.nf"
+    process "QUERY_HET_AD"
+
+    test("extracts per-chr HetInfo, allelic depths, and phased genotypes") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT'],
+                    file("\${projectDir}/tests/fixtures/cnv_core/het/TEST_PT_chr1_het.vcf.gz"),
+                    files("\${projectDir}/tests/fixtures/cnv_core/het/*_het.vcf.gz"),
+                    files("\${projectDir}/tests/fixtures/cnv_core/het/*_het.vcf.gz.tbi"),
+                    files("\${projectDir}/tests/fixtures/cnv_core/phased/*_het_eagle2phased.vcf.gz"),
+                    files("\${projectDir}/tests/fixtures/cnv_core/phased/*_het_eagle2phased.vcf.gz.tbi")
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert path(process.out[0].get(0)[1]).exists()
+        }
+    }
+}
