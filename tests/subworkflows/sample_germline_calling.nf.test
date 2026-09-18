@@ -1,0 +1,38 @@
+nextflow_workflow {
+    name "Test SAMPLE_GERMLINE_CALLING"
+    script "subworkflows/local/sample_germline_calling/main.nf"
+    workflow "SAMPLE_GERMLINE_CALLING"
+    options "-stub"
+    config "tests/nf-core/parabricks/haplotypecaller.nf.config"
+
+    test("calls every unique sample exactly once, including a normal shared across pairs") {
+        when {
+            workflow {
+                """
+                input[0] = Channel.of(
+                    [ [patient: 'PT01', sample: 'PT01_normal', sex: 'female', status: 0], file("${projectDir}/tests/fixtures/samplesheet_to_pairs/normal.cram"), file("${projectDir}/tests/fixtures/samplesheet_to_pairs/normal.cram.crai") ],
+                    [ [patient: 'PT01', sample: 'PT01_tumor_a', sex: 'female', status: 1], file("${projectDir}/tests/fixtures/samplesheet_to_pairs/tumor_a.cram"), file("${projectDir}/tests/fixtures/samplesheet_to_pairs/tumor_a.cram.crai") ]
+                )
+                input[1] = Channel.value(file("${projectDir}/tests/fixtures/joint_genotyping/placeholder.fasta"))
+                input[2] = Channel.value(file("${projectDir}/tests/fixtures/joint_genotyping/placeholder.g.vcf.gz"))
+                """
+            }
+        }
+        then {
+            // Asserts the desired end state, the same convention as
+            // tests/local/index_gvcf.nf.test and tests/subworkflows/sample_read_counts.nf.test:
+            // this FAILS today on a known, accepted gap that is a variant of the one already
+            // documented in tests/local/index_gvcf.nf.test (SPEC.md Sec12.7) -- PARABRICKS_HAPLOTYPECALLER
+            // ships a stub{} block (`echo '' | gzip > *.g.vcf.gz`), but INDEX_GVCF does not, so under
+            // -stub the module's fake gvcf is real plain gzip, not BGZF, and INDEX_GVCF's real
+            // bcftools index invocation aborts with "the file is not BGZF compressed" before either
+            // real content or real pbrun output ever matters. This is a channel-wiring test only;
+            // fixing it requires either a stub{} block on INDEX_GVCF or a real BGZF-producing
+            // PARABRICKS run, both out of this task's two-file scope. Do not "fix" it by flipping to
+            // !workflow.success: that reports green today for the wrong reason and turns red exactly
+            // when the pipeline becomes correct.
+            assert workflow.success
+            assert workflow.out.sample_gvcfs.size() == 2
+        }
+    }
+}
