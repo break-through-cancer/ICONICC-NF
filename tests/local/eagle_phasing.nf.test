@@ -1,0 +1,24 @@
+nextflow_process {
+    name "Test eagle_phasing"
+    script "modules/local/eagle_phasing.nf"
+    process "EAGLE_PHASING"
+
+    test("phases het sites against the 1000G reference panel") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT'],
+                    files("\${projectDir}/tests/fixtures/cnv_core/het/*_het.vcf.gz"),
+                    file(params.ref_dir_1000g),
+                    file(params.genetic_map)
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert path(process.out[0].get(0)[1]).size() == 23
+        }
+    }
+}
