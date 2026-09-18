@@ -3,6 +3,7 @@ nextflow_pipeline {
     name "Test main.nf pipeline wiring"
     script "main.nf"
     options "-stub -process.errorStrategy=ignore"
+    config "tests/nf-core/parabricks/haplotypecaller.nf.config"
 
     // This is the first nf-test that ever loads main.nf itself (every other test in
     // this repo runs an individual module/subworkflow in isolation), which is exactly
@@ -14,19 +15,32 @@ nextflow_pipeline {
     // gvcf_pairs_ch wiring genuinely executes instead of being short-circuited by an
     // earlier failure.
     //
+    // config merges tests/nf-core/parabricks/haplotypecaller.nf.config on top of the
+    // shared nextflow.config (nf-test's `config` mechanism merges, it does not replace --
+    // same file already referenced by tests/nf-core/parabricks/haplotypecaller.nf.test and
+    // tests/subworkflows/sample_germline_calling.nf.test). That file overrides
+    // PARABRICKS_HAPLOTYPECALLER's cpus/memory down to something a dev machine's local
+    // executor can actually admit for a stub run, instead of the real production
+    // cpus=12/memory='72 GB' GPU-node sizing declared in nextflow.config -- which this
+    // test does not need or want to inflate the shared executor's admission ceiling for.
+    //
     // -process.errorStrategy=ignore (test-only CLI override, not in nextflow.config)
-    // exists so the unrelated, already-accepted SAMPLE_READ_COUNTS/CNV_CORE fixture gap
-    // (0-byte reference fixtures below -- see README.md "Known gaps in this phase" and
-    // tests/subworkflows/sample_read_counts.nf.test) cannot abort the whole Nextflow
-    // session before the SAMPLE_GERMLINE_CALLING/JOINT_GENOTYPING branch this test
-    // actually verifies gets to run to completion. Needed once PARABRICKS_HAPLOTYPECALLER/
-    // GATK4_* processes carry real production cpus/memory sizing (this task's own
-    // nextflow.config fix): that sizing serializes the three PARABRICKS_HAPLOTYPECALLER
-    // stub calls on a modest local executor, which reliably lets the SAMPLE_READ_COUNTS
-    // branch's near-instant, unrelated failure land -- and abort the whole run under the
-    // default errorStrategy -- before GATK4_GENOMICSDBIMPORT ever starts. Confirmed
-    // empirically: without this override, this test fails deterministically on this
-    // session's own machine once PARABRICKS_HAPLOTYPECALLER's real sizing is in place.
+    // exists so the unrelated, already-accepted CNV_CORE fixture gap cannot abort the
+    // whole Nextflow session before the SAMPLE_GERMLINE_CALLING/JOINT_GENOTYPING branch
+    // this test actually verifies gets to run to completion. Traced empirically (not
+    // "Parabricks serialization", an earlier, incorrect guess): CNV_CORE:TANGENT_XY (an
+    // un-stubbed R module, downstream of tumor_counts_ch/joint_vcf_ch) fails for real on
+    // the placeholder pon.rds fixture ("Error in readRDS(pon): error reading from
+    // connection") -- a ProcessFailedException that Nextflow's default errorStrategy
+    // ('terminate') turns into a session-wide abort. 'terminate' itself only stops
+    // scheduling *new* tasks (it does not kill ones already running), and on this
+    // session's machine GATK4_GENOMICSDBIMPORT's two tasks reliably finish first once
+    // PARABRICKS_HAPLOTYPECALLER's stub-scoped cpus/memory (config, above) and
+    // PREPROCESS_INTERVALS/COLLECT_READ_COUNTS's own stub: blocks let
+    // SAMPLE_GERMLINE_CALLING/JOINT_GENOTYPING race ahead unthrottled -- but
+    // -process.errorStrategy=ignore removes any dependence on winning that timing margin
+    // at all, so this test's result does not hinge on how fast a given CI/dev machine
+    // happens to be.
     test("one normal backing two tumors reaches JOINT_GENOTYPING for both pairs without a join-mismatch/duplicate abort") {
 
         when {
@@ -67,10 +81,16 @@ nextflow_pipeline {
         }
 
         then {
-            // Do NOT assert workflow.success: this samplesheet still runs into the same
-            // pre-existing, already-documented SAMPLE_READ_COUNTS file-name collision gap
-            // (see tests/subworkflows/sample_read_counts.nf.test) further downstream, which
-            // is unrelated to this task and not something this test is meant to catch.
+            // Do NOT assert workflow.success: this samplesheet still runs into the
+            // pre-existing, already-documented CNV_CORE fixture gap (CNV_CORE:TANGENT_XY
+            // fails for real on the placeholder pon.rds -- see the options comment above,
+            // and README.md "Known gaps in this phase" for the broader real-fixture-data/
+            // unbuilt-R-container gap this is one symptom of) further downstream, which is
+            // unrelated to this task and not something this test is meant to catch.
+            // (SAMPLE_READ_COUNTS's own, separately-documented fixture gap --
+            // tests/subworkflows/sample_read_counts.nf.test -- no longer manifests in this
+            // particular test: PREPROCESS_INTERVALS/COLLECT_READ_COUNTS both got stub:
+            // blocks alongside this fix so that branch succeeds cleanly under -stub here.)
             //
             // What this test IS meant to catch: gvcf_pairs_ch's failOnDuplicate/
             // failOnMismatch join guards firing on the normal GVCF that both pairs
@@ -82,28 +102,33 @@ nextflow_pipeline {
             // matched anything Nextflow actually emits (the real text is "Join mismatch for
             // the following entries:" / "Detected join operation duplicate emission on") and
             // could never fire -- dead assertions. They are deleted rather than fixed to
-            // match the real text: confirmed empirically (with -process.errorStrategy=ignore
-            // above) that main.nf's *other* join, tumor_counts_ch, legitimately produces
-            // that exact generic "Join mismatch for the following entries:" text on this
-            // same samplesheet, purely as a downstream symptom of the already-accepted
-            // SAMPLE_READ_COUNTS gap -- unrelated to gvcf_pairs_ch. Nextflow's join-mismatch
-            // message is generic (not tagged by which channel produced it), so a text regex
-            // cannot distinguish "gvcf_pairs_ch mismatched" from "some unrelated join
-            // mismatched" -- it would be a standing false-positive here. The explicit
-            // "no matching GVCF" guard-message check below is gvcf_pairs_ch-specific (a
-            // custom error() call unique to that code path, not a generic Nextflow message)
-            // and the gendb_tasks.size() == 2 check below is the real positive-evidence
-            // verification -- between the two, gvcf_pairs_ch's own correctness is already
-            // fully covered without the deleted regexes.
+            // match the real text: while debugging this same fix, main.nf's *other* join,
+            // tumor_counts_ch, was directly observed producing that exact generic "Join
+            // mismatch for the following entries:" text on this same samplesheet, purely as
+            // a downstream symptom of a (since-fixed, see above) SAMPLE_READ_COUNTS gap --
+            // entirely unrelated to gvcf_pairs_ch. Nextflow's join-mismatch message is
+            // generic (not tagged by which channel produced it), so a text regex can never
+            // distinguish "gvcf_pairs_ch mismatched" from "some other, unrelated join
+            // mismatched" -- it would be a standing false-positive risk even now that this
+            // particular occurrence is fixed. The explicit "no matching GVCF" guard-message
+            // check below is gvcf_pairs_ch-specific (a custom error() call unique to that
+            // code path, not a generic Nextflow message) and the succeeded-task check below
+            // is the real positive-evidence verification -- between the two,
+            // gvcf_pairs_ch's own correctness is already fully covered without the deleted,
+            // channel-ambiguous regexes.
             def log = (workflow.stdout + workflow.stderr).join('\n')
             assert !log.contains('no matching GVCF from SAMPLE_GERMLINE_CALLING')
 
             // Positive evidence the join fanned out correctly: JOINT_GENOTYPING (via
-            // GATK4_GENOMICSDBIMPORT, its first step) must have started once per pair --
+            // GATK4_GENOMICSDBIMPORT, its first step) must have succeeded once per pair --
             // one for the tumor_a/normal pair, one for tumor_b/normal -- not zero (the
             // whole chain never reached JOINT_GENOTYPING) and not one (the fan-out
-            // collapsed to a single pair).
-            def gendb_tasks = workflow.trace.tasks().findAll { it.name.contains('GATK4_GENOMICSDBIMPORT') }
+            // collapsed to a single pair). Uses workflow.trace.succeeded() rather than
+            // .tasks(): with -process.errorStrategy=ignore in play, a task that was
+            // submitted but failed would still show up in .tasks(), so counting on that
+            // would only prove GATK4_GENOMICSDBIMPORT was attempted twice, not that it
+            // completed successfully twice.
+            def gendb_tasks = workflow.trace.succeeded().findAll { it.name.contains('GATK4_GENOMICSDBIMPORT') }
             assert gendb_tasks.size() == 2
         }
     }
