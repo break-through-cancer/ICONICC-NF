@@ -72,6 +72,15 @@ workflow SAMPLESHEET_TO_PAIRS {
             ]
             [ pair_meta, file(resolveRelativeToProjectDir(tumor_jv), checkIfExists: true), file(resolveRelativeToProjectDir(tumor_jvi), checkIfExists: true) ]
         }
+        // A samplesheet that yields zero pairs -- no tumor rows at all, or any other
+        // mistake that leaves the cross with nothing to emit -- would otherwise run the
+        // whole pipeline to completion, publish nothing, and exit 0. That silent success
+        // is exactly the failure mode SPEC.md Sec11.1 rejects, and the same reason the
+        // duplicate-normal, orphan-tumor and sex-mismatch cases above are hard errors.
+        // `ifEmpty` re-emits the upstream items untouched when the channel is non-empty,
+        // so this is a no-op on any valid samplesheet and only fires on a genuinely
+        // empty one.
+        .ifEmpty { error "Samplesheet produced zero tumor/normal pairs -- check that it has at least one status=1 (tumor) row with a matching status=0 (normal) row for the same patient" }
 
     emit:
     samples // [ meta(patient,sample,sex,status), cram, crai ]
