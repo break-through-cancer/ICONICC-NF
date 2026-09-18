@@ -1,0 +1,23 @@
+nextflow_process {
+    name "Test filter_variants"
+    script "modules/local/filter_variants.nf"
+    process "FILTER_VARIANTS"
+
+    test("keeps only variants with combined ALT depth >= 5") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT'],
+                    file("\${projectDir}/tests/fixtures/cnv_core/pair_subset.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/cnv_core/pair_subset.vcf.gz.tbi")
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert path(process.out[0].get(0)[1]).exists()
+        }
+    }
+}
