@@ -1,0 +1,24 @@
+nextflow_process {
+    name "Test preprocess_intervals"
+    script "modules/local/preprocess_intervals.nf"
+    process "PREPROCESS_INTERVALS"
+
+    test("produces a WGS-wide preprocessed interval list") {
+        when {
+            process {
+                """
+                input[0] = [
+                    file(params.ref_fasta),
+                    file(params.ref_fasta_fai),
+                    file(params.ref_fasta_dict)
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert path(process.out[0].get(0)).exists()
+            assert path(process.out[0].get(0)).text.contains("@SQ")
+        }
+    }
+}
