@@ -12,27 +12,41 @@ See `SPEC.md` for the full design. Two logical halves:
 
 ## Local usage
 
-`main.nf` runs the `CNV_CORE` subworkflow standalone. Ten per-run parameters are
-required; every reference file has a working default in `nextflow.config` and only
-needs an override to point somewhere else.
+`main.nf` takes a single samplesheet, driving the germline read-counting and
+`CNV_CORE` subworkflows for every tumor/normal pair it describes. Every reference
+file has a working default in `nextflow.config` and only needs an override to point
+somewhere else.
 
 ```bash
-nextflow run main.nf \
-    --participant_id    PT001 \
-    --normal_sample_id  PT001_N \
-    --tumor_sample_id   PT001_T \
-    --sample_sex        female \
-    --joint_vcf         /data/PT001/joint.vcf.gz \
-    --joint_vcf_index   /data/PT001/joint.vcf.gz.tbi \
-    --tumor_cram        /data/PT001/tumor.recal.cram \
-    --tumor_crai        /data/PT001/tumor.recal.cram.crai \
-    --normal_cram       /data/PT001/normal.recal.cram \
-    --normal_crai       /data/PT001/normal.recal.cram.crai
+nextflow run main.nf --input samplesheet.csv
 ```
 
-`--sample_sex` takes `female` or `male`. Omitting any of the ten required parameters
-fails immediately, naming the ones that are missing; a path that does not exist fails
-at startup naming that path, rather than deep inside a container.
+`--input` is the only required parameter; omitting it fails immediately with a
+message naming the missing parameter and pointing back at this README and
+`assets/samplesheet.csv`. A path inside the samplesheet that does not exist also
+fails at startup naming that path, rather than deep inside a container.
+
+### Samplesheet format
+
+CSV, one row per sample (not per pair) — modeled on nf-core/sarek's own
+samplesheet convention. See `assets/samplesheet.csv` for a filled-in template;
+full rationale in `SPEC.md` §11.
+
+| Column | Required | Meaning |
+| --- | --- | --- |
+| `patient` | always | Groups a patient's normal and tumor rows for pairing. |
+| `sample` | always | Sample ID, unique within the samplesheet. |
+| `sex` | always | `female` or `male`. |
+| `status` | always | `0` = normal, `1` = tumor. |
+| `cram` / `crai` | always | The sample's recalibrated CRAM from `sarek_align`. |
+| `joint_vcf` / `joint_vcf_index` | tumor rows only | Transitional: the joint-genotyped, VQSR-filtered VCF for that tumor's pair with its patient's normal. Ignored on normal rows. Once Phase 2 (`SPEC.md` §5) lands, these two columns are computed by the pipeline instead of supplied, and will disappear from the schema. |
+
+Pairing is derived automatically: each patient must have exactly one `status: 0`
+row, which is crossed against every one of that patient's `status: 1` rows,
+producing one pair per tumor (a normal referenced by several tumors is paired,
+and its read counts computed, exactly once). A patient with more than one normal,
+a tumor with no matching normal, or a tumor/normal sex mismatch all fail fast with
+a named error rather than pairing silently incorrectly.
 
 Reference defaults that may be worth overriding:
 

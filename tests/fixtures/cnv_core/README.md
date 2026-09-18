@@ -31,15 +31,18 @@ plus chrX — matching the per-chromosome loop in the corresponding module.
 | --- | --- |
 | `joint.vcf.gz` | The joint-genotyped, VQSR-filtered VCF (`output_vcf_file`) from a completed ICONICC WDL run's joint-genotyping subworkflow. |
 | `joint.vcf.gz.tbi` | Tabix index for `joint.vcf.gz` (`output_vcf_index_file`). |
-| `normal.recal.cram` | The normal sample's recalibrated CRAM from `sarek_align`, for the same run. |
-| `normal.recal.cram.crai` | CRAM index for `normal.recal.cram`. |
 | `tumor.recal.cram` | The tumor sample's recalibrated CRAM from `sarek_align`, for the same run. |
 | `tumor.recal.cram.crai` | CRAM index for `tumor.recal.cram`. |
 | `sample_info.env` | Shell-sourceable file recording the real `PARTICIPANT_ID`, `NORMAL_SAMPLE_ID`, `TUMOR_SAMPLE_ID`, and `SAMPLE_SEX` for the staged run, so later tests use real IDs instead of placeholders. Its four values must also be copied into `params.fixture_participant_id` / `fixture_normal_id` / `fixture_tumor_id` / `fixture_sample_sex` in `nextflow.config`, or passed on the nf-test command line — `tests/subworkflows/cnv_core.nf.test` asserts they are non-null before it runs. |
 
-Used by `tests/subworkflows/cnv_core.nf.test` (all of the above),
-`tests/local/subset_pair_vcf.nf.test` (`joint.vcf.gz*`), and
-`tests/local/collect_read_counts.nf.test` (`tumor.recal.cram*`).
+`tests/subworkflows/cnv_core.nf.test` now consumes a pre-computed tumor read-counts
+file directly (`TEST_TUMOR_counts.txt`, in the allelic-count stage below) rather than
+raw CRAMs, so the normal sample's recalibrated CRAM is not needed as a fixture here —
+only `joint.vcf.gz`/`joint.vcf.gz.tbi` and the `fixture_*` params sourced from
+`sample_info.env` are. Used by `tests/subworkflows/cnv_core.nf.test`
+(`joint.vcf.gz*`, `fixture_*` params), `tests/local/subset_pair_vcf.nf.test`
+(`joint.vcf.gz*`), and `tests/local/collect_read_counts.nf.test`
+(`tumor.recal.cram*`).
 
 ### Interval and variant-subset stage (derived)
 
@@ -78,7 +81,7 @@ the chr1 member of the `het/` set above, not a separate file.
 | `query/*_HetInfo.txt` | `QUERY_HET_AD` (per-chromosome het site info) | `ac_calc.nf.test` |
 | `query/*.AD.chr*.txt` | `QUERY_HET_AD` (per-sample, per-chromosome allelic depths) | `ac_calc.nf.test` |
 | `query/*.phasedGT.chr*.1.txt` | `QUERY_HET_AD` (per-sample, per-chromosome phased genotypes) | `ac_calc.nf.test` |
-| `TEST_TUMOR_counts.txt` | `COLLECT_READ_COUNTS` (per-bin tumor read counts) | `ac_calc.nf.test`, `tangent_xy.nf.test` |
+| `TEST_TUMOR_counts.txt` | `COLLECT_READ_COUNTS` (per-bin tumor read counts) | `ac_calc.nf.test`, `tangent_xy.nf.test`, `tests/subworkflows/cnv_core.nf.test` |
 | `TEST_PT_allelic_counts.txt` | `AC_CALC` | `segment.nf.test` |
 | `posttangent_log2.rds` | `TANGENT_XY` | `segment.nf.test` |
 
@@ -93,7 +96,7 @@ called.
 
 See Task 3 Step 2 in the brief for the exact `aws s3 cp` commands. In short:
 ask the dev for a completed run's `output_vcf_file` / `output_vcf_index_file`
-plus both samples' `recal.cram` / `.crai`, note the real
+plus the tumor sample's `recal.cram` / `.crai`, note the real
 `participant_id` / `normal_sample_id` / `tumor_sample_id` / sample sex, and
 copy each file to the fixed name listed above.
 
