@@ -12,7 +12,7 @@ process SEGMENT {
     script:
     """
     set -euo pipefail
-    Rscript ${projectDir}/bin/segment.R \\
+    segment.R \\
         --al_cts ${allelic_counts} --tangent_cts ${tangent_normalized} \\
         --sample_sex ${meta.sample_sex} --participant_id ${meta.participant_id} \\
         --smth_reg ${meta.smooth_region} --outlier_SD ${meta.outlier_SD} --smooth_SD ${meta.smooth_SD} \\

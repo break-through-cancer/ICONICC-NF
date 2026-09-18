@@ -1,3 +1,4 @@
+#!/usr/bin/env Rscript
 ### Author: Wolu Chukwu, wchukwu@broadinstitute.org, Shahab Sarmashghi, ssarmash@broadinstitute.org
 ### Date last updated: April 18, 2025
 ### License: GNU GPL2, Copyright (C) 2024 Dana-Farber Cancer Institute

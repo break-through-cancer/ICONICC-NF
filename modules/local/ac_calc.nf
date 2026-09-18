@@ -14,7 +14,7 @@ process AC_CALC {
     def binsize_arg = meta.desired_binsize ? "${meta.desired_binsize}" : ''
     """
     set -euo pipefail
-    Rscript ${projectDir}/bin/ac_calc.R \\
+    ac_calc.R \\
         ${meta.participant_id} ${tumor_counts} ${agg_bins} ${binsize_arg} \\
         ${meta.normal_sample_id} ${meta.tumor_sample_id} \\
         ${phased_files} ${ad_files} ${hetinfo_files}
