@@ -26,17 +26,30 @@ workflow {
         use_het: true, miss_thresh: 1.0, agg_bins: false, desired_binsize: null
     ]
 
-    joint_vcf_ch   = Channel.of([ meta, file(params.joint_vcf), file(params.joint_vcf_index) ])
-    tumor_cram_ch  = Channel.of([ meta, file(params.tumor_cram), file(params.tumor_crai) ])
-    normal_cram_ch = Channel.of([ meta, file(params.normal_cram), file(params.normal_crai) ])
-    ref_fasta_ch   = Channel.of([ file(params.ref_fasta), file(params.ref_fasta_fai), file(params.ref_fasta_dict) ])
+    // checkIfExists on every input: a wrong or unstaged path fails here, at
+    // startup, naming the offending file -- instead of being staged as a
+    // dangling reference and surfacing much later as an opaque bcftools/htslib
+    // error from inside a task container.
+    joint_vcf_ch   = Channel.of([ meta,
+        file(params.joint_vcf, checkIfExists: true),
+        file(params.joint_vcf_index, checkIfExists: true) ])
+    tumor_cram_ch  = Channel.of([ meta,
+        file(params.tumor_cram, checkIfExists: true),
+        file(params.tumor_crai, checkIfExists: true) ])
+    normal_cram_ch = Channel.of([ meta,
+        file(params.normal_cram, checkIfExists: true),
+        file(params.normal_crai, checkIfExists: true) ])
+    ref_fasta_ch   = Channel.of([
+        file(params.ref_fasta, checkIfExists: true),
+        file(params.ref_fasta_fai, checkIfExists: true),
+        file(params.ref_fasta_dict, checkIfExists: true) ])
 
     CNV_CORE(
         joint_vcf_ch, tumor_cram_ch, normal_cram_ch, ref_fasta_ch,
-        Channel.value(file(params.ref_dir_1000g)),
-        Channel.value(file(params.genetic_map)),
-        Channel.value(file(params.pon)),
-        Channel.value(file(params.ref_clinical)),
-        Channel.value(file(params.cohort_clinical))
+        Channel.value(file(params.ref_dir_1000g, checkIfExists: true)),
+        Channel.value(file(params.genetic_map, checkIfExists: true)),
+        Channel.value(file(params.pon, checkIfExists: true)),
+        Channel.value(file(params.ref_clinical, checkIfExists: true)),
+        Channel.value(file(params.cohort_clinical, checkIfExists: true))
     )
 }

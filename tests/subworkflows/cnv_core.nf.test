@@ -7,6 +7,15 @@ nextflow_workflow {
         when {
             workflow {
                 """
+                // Fail fast and legibly when the real fixture data has not been
+                // staged. Without this the run proceeds with null identifiers and
+                // dangling file() references, and dies much later inside a
+                // container with an opaque bcftools/htslib error.
+                assert params.fixture_participant_id != null : "CNV_CORE fixtures not staged: params.fixture_participant_id is null. Stage tests/fixtures/cnv_core/ and set the fixture_* params (see tests/fixtures/cnv_core/README.md)."
+                assert params.fixture_normal_id != null : "CNV_CORE fixtures not staged: params.fixture_normal_id is null. See tests/fixtures/cnv_core/README.md."
+                assert params.fixture_tumor_id != null : "CNV_CORE fixtures not staged: params.fixture_tumor_id is null. See tests/fixtures/cnv_core/README.md."
+                assert params.fixture_sample_sex != null : "CNV_CORE fixtures not staged: params.fixture_sample_sex is null. See tests/fixtures/cnv_core/README.md."
+
                 def meta = [
                     participant_id: params.fixture_participant_id,
                     normal_sample_id: params.fixture_normal_id,
