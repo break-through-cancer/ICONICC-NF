@@ -63,7 +63,7 @@ workflow {
                              // one opaque element instead of flattening the list
 
     pairs_by_normal_key = SAMPLESHEET_TO_PAIRS.out.pairs
-        .map { pair_meta, _jv, _jvi -> [ [patient: pair_meta.patient, sample: pair_meta.normal_sample_id], pair_meta ] }
+        .map { pair_meta -> [ [patient: pair_meta.patient, sample: pair_meta.normal_sample_id], pair_meta ] }
         .combine(normal_gvcf_keys_ch)
         .map { key, pair_meta, wrapper ->
             if (!(key in wrapper.keys)) {
@@ -133,7 +133,7 @@ workflow {
     joint_vcf_ch = JOINT_GENOTYPING.out.joint_vcf // [ pair_meta, vcf, tbi ]
 
     tumor_counts_ch = SAMPLESHEET_TO_PAIRS.out.pairs
-        .map { pair_meta, _jv, _jvi ->
+        .map { pair_meta ->
             [ [patient: pair_meta.patient, sample: pair_meta.tumor_sample_id], pair_meta ]
         }
         .join(

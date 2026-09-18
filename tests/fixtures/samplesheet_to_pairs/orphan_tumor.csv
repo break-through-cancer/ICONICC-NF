@@ -1,2 +1,2 @@
-patient,sample,sex,status,cram,crai,joint_vcf,joint_vcf_index
-PT05,PT05_tumor,female,1,tests/fixtures/samplesheet_to_pairs/tumor_a.cram,tests/fixtures/samplesheet_to_pairs/tumor_a.cram.crai,tests/fixtures/samplesheet_to_pairs/tumor_a_vs_normal.vcf.gz,tests/fixtures/samplesheet_to_pairs/tumor_a_vs_normal.vcf.gz.tbi
+patient,sample,sex,status,cram,crai
+PT05,PT05_tumor,female,1,tests/fixtures/samplesheet_to_pairs/tumor_a.cram,tests/fixtures/samplesheet_to_pairs/tumor_a.cram.crai

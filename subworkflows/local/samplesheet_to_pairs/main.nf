@@ -1,17 +1,17 @@
 workflow SAMPLESHEET_TO_PAIRS {
     take:
-    samplesheet // path to samplesheet CSV (patient,sample,sex,status,cram,crai,joint_vcf,joint_vcf_index)
+    samplesheet // path to samplesheet CSV (patient,sample,sex,status,cram,crai)
 
     main:
     rows = Channel.fromPath(resolveRelativeToProjectDir(samplesheet), checkIfExists: true)
         .splitCsv(header: true)
         .map { row -> validateSamplesheetRow(row) }
 
-    samples = rows.map { meta, cram, crai, _jv, _jvi -> [ meta, cram, crai ] }
+    samples = rows.map { meta, cram, crai -> [ meta, cram, crai ] }
 
     normal_ch = rows
-        .filter { meta, _cram, _crai, _jv, _jvi -> meta.status == 0 }
-        .map { meta, _cram, _crai, _jv, _jvi -> [ meta.patient, meta ] }
+        .filter { meta, _cram, _crai -> meta.status == 0 }
+        .map { meta, _cram, _crai -> [ meta.patient, meta ] }
         .groupTuple()
         .map { patient, metas ->
             if (metas.size() > 1) {
@@ -34,14 +34,14 @@ workflow SAMPLESHEET_TO_PAIRS {
     normal_patients_ch = normal_ch.map { patient, _meta -> patient }.toList().map { [normals: it] }
 
     tumor_ch = rows
-        .filter { meta, _cram, _crai, _jv, _jvi -> meta.status == 1 }
-        .map { meta, _cram, _crai, jv, jvi -> [ meta.patient, meta, jv, jvi ] }
+        .filter { meta, _cram, _crai -> meta.status == 1 }
+        .map { meta, _cram, _crai -> [ meta.patient, meta ] }
         .combine(normal_patients_ch)
-        .map { patient, meta, jv, jvi, wrapper ->
+        .map { patient, meta, wrapper ->
             if (!(patient in wrapper.normals)) {
                 error "Tumor sample '${meta.sample}' (patient '${patient}') has no matching normal (status=0) sample in the samplesheet"
             }
-            [ patient, meta, jv, jvi ]
+            [ patient, meta ]
         }
 
     // Sarek's own pattern (workflows/sarek.nf in the vendored reference copy): cross a
@@ -52,8 +52,6 @@ workflow SAMPLESHEET_TO_PAIRS {
         .map { normal, tumor ->
             def normal_meta = normal[1]
             def tumor_meta  = tumor[1]
-            def tumor_jv    = tumor[2]
-            def tumor_jvi   = tumor[3]
 
             if (normal_meta.sex != tumor_meta.sex) {
                 error "Sex mismatch for patient '${normal_meta.patient}': normal '${normal_meta.sample}' is '${normal_meta.sex}', tumor '${tumor_meta.sample}' is '${tumor_meta.sex}'"
@@ -70,7 +68,7 @@ workflow SAMPLESHEET_TO_PAIRS {
                 undo_split: 'none', undo_prune: 0.05, undo_SD: 2, recovery_thresh: 20,
                 use_het: true, miss_thresh: 1.0, agg_bins: false, desired_binsize: null
             ]
-            [ pair_meta, file(resolveRelativeToProjectDir(tumor_jv), checkIfExists: true), file(resolveRelativeToProjectDir(tumor_jvi), checkIfExists: true) ]
+            pair_meta
         }
         // A samplesheet that yields zero pairs -- no tumor rows at all, or any other
         // mistake that leaves the cross with nothing to emit -- would otherwise run the
@@ -84,7 +82,7 @@ workflow SAMPLESHEET_TO_PAIRS {
 
     emit:
     samples // [ meta(patient,sample,sex,status), cram, crai ]
-    pairs   // [ pair_meta, joint_vcf, joint_vcf_index ]
+    pairs   // bare pair_meta map per item, not a list/tuple
 }
 
 def validateSamplesheetRow(row) {
@@ -100,14 +98,11 @@ def validateSamplesheetRow(row) {
     if (!row.crai) error "Samplesheet row '${row.sample}' missing 'crai'"
 
     def status = row.status.toInteger()
-    if (status == 1 && (!row.joint_vcf || !row.joint_vcf_index)) {
-        error "Tumor row '${row.sample}' (patient '${row.patient}') missing 'joint_vcf'/'joint_vcf_index' -- required on every tumor row until Phase 2 automates joint-genotyping (SPEC.md §11.2)"
-    }
 
     def meta = [ patient: row.patient, sample: row.sample, sex: row.sex, status: status ]
     def cram = file(resolveRelativeToProjectDir(row.cram), checkIfExists: true)
     def crai = file(resolveRelativeToProjectDir(row.crai), checkIfExists: true)
-    [ meta, cram, crai, row.joint_vcf, row.joint_vcf_index ]
+    [ meta, cram, crai ]
 }
 
 // Samplesheet paths are authored relative to the pipeline's own directory (this is the
