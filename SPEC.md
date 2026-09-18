@@ -306,3 +306,112 @@ run outputs before trusting it).
    produces the same column order the CNV half expects.
 4. Full end-to-end run against a real patient pair, compare final CNV segment/allelic-count
    outputs against the existing WDL pipeline's outputs for the same patient.
+
+## 11. Samplesheet-based input & multi-pair support (post-Phase-1 revision)
+
+Phase 1 shipped `main.nf` taking one tumor/normal pair via ten flat `--param` flags
+(§ commit history, not this doc — see `docs/superpowers/plans/2026-09-17-cnv-core-subworkflow.md`).
+This section replaces that with a samplesheet, adds support for multiple pairs per run, and
+adds real compute dedup when the same normal is reused across several tumors (e.g. one
+patient's PBMC germline vs. several tumor samples) — confirmed with the dev as a real
+requirement, not just a metadata convenience.
+
+### 11.1 Why sample-level, not pair-level
+
+Modeled directly on nf-core/sarek's own samplesheet convention
+(`assets/schema_input.json`, `assets/samplesheet.csv` in the vendored sarek source under
+`reference/sarek/` — not part of this repo, pulled for reference during Phase 1). Sarek's
+sheet is **one row per sample** (patient/sample/sex/status + file), not one row per pair —
+pairing is derived downstream via a `.cross()` on `patient` between samples with
+`status: 0` (normal) and `status: 1` (tumor) (`workflows/sarek.nf:360-375` in the vendored
+copy). For a patient with one normal and N tumors, this produces exactly N pairs, each
+naturally reusing the same normal — the comment in sarek's own source literally reads
+`// Use cross to combine normal with all tumor samples, i.e. multi tumor samples from
+recurrences`. This is the same scenario the dev asked about (one PBMC germline vs. several
+tumors), so the pattern transfers directly rather than needing to be invented.
+
+Pairing this way also isn't a new convention for this project specifically: the *original*
+WDL pipeline's own Cirro `preprocess.py` (`reference/btc-wdl-pipelines/cirro/preprocess.py`,
+`yield_single_inputs()`) already derived `participant_id = f"{tumor_sample_id}_vs_
+{normal_sample_id}"` when auto-pairing multiple tumor/normal files from one dataset
+selection. Sarek's `meta.id = "${tumor.sample}_vs_${normal.sample}"` is the identical
+convention. Adopting it here converges on something that already existed in two independent
+places, rather than introducing a third naming scheme.
+
+**Validation**: mirror sarek's own guard — a patient with more than one `status: 0` row is
+a hard error (`workflows/sarek.nf` calls this out explicitly: "has more than one sample with
+normal status"). Supporting multiple normals per patient was not requested and would make
+"which normal pairs with which tumor" ambiguous; out of scope. Also carry over the original
+WDL Cirro `preprocess.py`'s own check (`yield_single_inputs()`): a tumor whose `sex` doesn't
+match its patient's normal is a hard error, not a silent skip as the WDL version did — a
+mismatch indicates a sample mix-up, and failing loudly is more appropriate for a
+samplesheet a human curated directly than for a preprocessing script auto-pairing files.
+
+### 11.2 Samplesheet schema
+
+CSV, one row per sample:
+
+```
+patient,sample,sex,status,cram,crai,joint_vcf,joint_vcf_index
+PT01,PT01_normal,XX,0,s3://.../PT01_normal.recal.cram,s3://.../PT01_normal.recal.cram.crai,,
+PT01,PT01_tumor_A,XX,1,s3://.../PT01_tumor_A.recal.cram,s3://.../PT01_tumor_A.recal.cram.crai,s3://.../PT01_tumor_A_vs_PT01_normal.vcf.gz,s3://.../PT01_tumor_A_vs_PT01_normal.vcf.gz.tbi
+PT01,PT01_tumor_B,XX,1,s3://.../PT01_tumor_B.recal.cram,s3://.../PT01_tumor_B.recal.cram.crai,s3://.../PT01_tumor_B_vs_PT01_normal.vcf.gz,s3://.../PT01_tumor_B_vs_PT01_normal.vcf.gz.tbi
+```
+
+- `patient`, `sample`, `sex` (`male`/`female`, matching the WDL's existing convention —
+  not sarek's `XX`/`XY`, to avoid a needless translation layer downstream in the R scripts,
+  which already expect `male`/`female`), `status` (`0`=normal, `1`=tumor): required on every
+  row, sarek-identical semantics.
+- `cram`/`crai`: required on every row — the `sarek_align` output this pipeline has always
+  consumed (SPEC.md §1, §5).
+- `joint_vcf`/`joint_vcf_index`: **required on tumor rows, ignored on normal rows.**
+  Transitional — joint-genotyping is pairwise per patient (§5: "feed it just the one
+  patient's two samples per pipeline run", not cohort-wide), so a patient with 3 tumors
+  needs 3 separate joint-genotyping runs today, one per tumor row, each against the shared
+  normal. Once Phase 2 (§5) is built, these two columns are computed by the pipeline instead
+  of supplied, and disappear from the schema — the schema is expected to change again then,
+  not a stable long-term contract.
+
+Schema validation: a `assets/schema_input.json` following sarek's own JSON-Schema
+convention (referenced from `nextflow_schema.json` via nf-schema, matching this org's other
+Nextflow/Cirro pipelines where applicable) — enumerated as its own plan task, not written
+inline in this spec.
+
+### 11.3 Pairing and dedup architecture
+
+`main.nf` (or a thin subworkflow it delegates to) does, in order:
+
+1. Parse the samplesheet into a per-sample channel: `[meta(patient, sample, sex, status),
+   cram, crai]`.
+2. Feed **every** sample (both normal and tumor) through a new sample-level subworkflow —
+   `subworkflows/local/sample_read_counts/` — running `PREPROCESS_INTERVALS` once globally
+   (unchanged from Phase 1) and `COLLECT_READ_COUNTS` once per unique `(patient, sample)`.
+   This is the actual dedup: a normal referenced by 3 tumor rows only gets its read counts
+   computed once, because it only appears once in the sample-level channel.
+3. Branch the sample-level channel by `status`, `.cross()` on `patient` (sarek's exact
+   pattern, §11.1) to build one pair-level `meta` per tumor: `{participant_id:
+   "${tumor.sample}_vs_${normal.sample}", normal_sample_id, tumor_sample_id, sample_sex,
+   ...tuning fields}` — the same uniform per-participant `meta` shape `CNV_CORE` already
+   expects (Phase 1 plan, Task 5's note), constructed once per pair instead of once per
+   pipeline invocation.
+4. Join each pair's `meta` to its normal's and tumor's already-computed read-counts (by
+   `(patient, sample)`) and to its `joint_vcf`/`joint_vcf_index` (from the tumor row) — one
+   `CNV_CORE`-shaped input tuple per pair.
+5. Call `CNV_CORE` with a **multi-item** channel (one item per pair) instead of Phase 1's
+   single-item `Channel.of([meta, ...])`. Nothing inside `CNV_CORE` from `SUBSET_PAIR_VCF`
+   onward needs to change — every module in it already keys on `meta` and Nextflow
+   processes handle N-items-in-flight natively; Phase 1's per-task reviews already confirmed
+   this wiring is correct in general, not just for exactly one item.
+
+**`CNV_CORE`'s `take:` interface changes**: `tumor_cram_ch`/`normal_cram_ch` (raw CRAMs) are
+replaced by `tumor_counts_ch`/`normal_counts_ch` (pre-computed, already-deduplicated
+`COLLECT_READ_COUNTS` outputs, `[meta, counts_file]`). `ref_fasta_ch` is dropped from
+`CNV_CORE`'s `take:` entirely — `PREPROCESS_INTERVALS` moves out with `COLLECT_READ_COUNTS`
+into the new sample-level subworkflow, since both are sample/reference-scoped, not
+pair-scoped. This is a breaking change to `CNV_CORE`'s external interface from Phase 1 —
+expected and acceptable, since Phase 1 was explicitly a standalone validation harness
+(§10 point 1), not a frozen contract.
+
+**Single-pair case**: a two-row samplesheet (one normal, one tumor for one patient)
+produces exactly one item through the cross in step 3 — identical behavior to Phase 1,
+just expressed through a samplesheet instead of ten CLI flags.
