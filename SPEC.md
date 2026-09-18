@@ -353,9 +353,9 @@ CSV, one row per sample:
 
 ```
 patient,sample,sex,status,cram,crai,joint_vcf,joint_vcf_index
-PT01,PT01_normal,XX,0,s3://.../PT01_normal.recal.cram,s3://.../PT01_normal.recal.cram.crai,,
-PT01,PT01_tumor_A,XX,1,s3://.../PT01_tumor_A.recal.cram,s3://.../PT01_tumor_A.recal.cram.crai,s3://.../PT01_tumor_A_vs_PT01_normal.vcf.gz,s3://.../PT01_tumor_A_vs_PT01_normal.vcf.gz.tbi
-PT01,PT01_tumor_B,XX,1,s3://.../PT01_tumor_B.recal.cram,s3://.../PT01_tumor_B.recal.cram.crai,s3://.../PT01_tumor_B_vs_PT01_normal.vcf.gz,s3://.../PT01_tumor_B_vs_PT01_normal.vcf.gz.tbi
+PT01,PT01_normal,female,0,s3://.../PT01_normal.recal.cram,s3://.../PT01_normal.recal.cram.crai,,
+PT01,PT01_tumor_A,female,1,s3://.../PT01_tumor_A.recal.cram,s3://.../PT01_tumor_A.recal.cram.crai,s3://.../PT01_tumor_A_vs_PT01_normal.vcf.gz,s3://.../PT01_tumor_A_vs_PT01_normal.vcf.gz.tbi
+PT01,PT01_tumor_B,female,1,s3://.../PT01_tumor_B.recal.cram,s3://.../PT01_tumor_B.recal.cram.crai,s3://.../PT01_tumor_B_vs_PT01_normal.vcf.gz,s3://.../PT01_tumor_B_vs_PT01_normal.vcf.gz.tbi
 ```
 
 - `patient`, `sample`, `sex` (`male`/`female`, matching the WDL's existing convention —
@@ -372,10 +372,19 @@ PT01,PT01_tumor_B,XX,1,s3://.../PT01_tumor_B.recal.cram,s3://.../PT01_tumor_B.re
   of supplied, and disappear from the schema — the schema is expected to change again then,
   not a stable long-term contract.
 
-Schema validation: a `assets/schema_input.json` following sarek's own JSON-Schema
-convention (referenced from `nextflow_schema.json` via nf-schema, matching this org's other
-Nextflow/Cirro pipelines where applicable) — enumerated as its own plan task, not written
-inline in this spec.
+Schema validation (**resolved**): hand-rolled Groovy inside the `SAMPLESHEET_TO_PAIRS`
+subworkflow (`subworkflows/local/samplesheet_to_pairs/main.nf`), not a JSON-Schema file.
+The sheet is read with plain `.splitCsv(header: true)` and each row passes through a
+`validateSamplesheetRow()` helper that hard-errors, naming the offending row, on a missing
+`patient`/`sample`/`cram`/`crai`, a `sex` outside `male`/`female`, a `status` outside
+`0`/`1`, or a tumor row missing `joint_vcf`/`joint_vcf_index`. The pair-level checks
+(>1 normal per patient, a tumor with no matching normal, tumor/normal sex mismatch, and a
+samplesheet yielding zero pairs at all) live in the same file. Sarek's
+`assets/schema_input.json` + `nextflow_schema.json` + nf-schema route was considered and
+deliberately not taken: this org's other Nextflow/Cirro pipelines are hand-rolled rather
+than nf-core-template based, so matching that convention avoids introducing an nf-schema
+dependency and a second place where the schema is defined. Neither
+`assets/schema_input.json` nor `nextflow_schema.json` exists in this repo, by design.
 
 ### 11.3 Pairing and dedup architecture
 
@@ -394,9 +403,18 @@ inline in this spec.
    ...tuning fields}` — the same uniform per-participant `meta` shape `CNV_CORE` already
    expects (Phase 1 plan, Task 5's note), constructed once per pair instead of once per
    pipeline invocation.
-4. Join each pair's `meta` to its normal's and tumor's already-computed read-counts (by
-   `(patient, sample)`) and to its `joint_vcf`/`joint_vcf_index` (from the tumor row) — one
-   `CNV_CORE`-shaped input tuple per pair.
+4. Join each pair's `meta` to its **tumor's** already-computed read-counts (by
+   `(patient, sample)`) — one `[pair_meta, tumor_counts]` tuple per pair. Only the tumor's
+   counts are joined: `CNV_CORE` consumes no normal counts (see the `take:` note below), so
+   the sample-level counts channel is filtered to `status == 1` before this join. The
+   normal's counts are still computed in step 2 — once per normal, role-uniformly — and
+   then simply go unconsumed; that cost is deliberate and documented in
+   `subworkflows/local/sample_read_counts/main.nf`.
+   The pair's `joint_vcf`/`joint_vcf_index` (from the tumor row) are *not* routed through
+   this join — they go straight from the samplesheet into `CNV_CORE`, because the phasing
+   chain (`SUBSET_PAIR_VCF` → … → `EAGLE_PHASING`) needs no counts data and must not be
+   gated behind that pair's hours-long `COLLECT_READ_COUNTS`. The two sides rejoin inside
+   `CNV_CORE` on `meta`, which matches by map equality regardless of which channel built it.
 5. Call `CNV_CORE` with a **multi-item** channel (one item per pair) instead of Phase 1's
    single-item `Channel.of([meta, ...])`. Nothing inside `CNV_CORE` from `SUBSET_PAIR_VCF`
    onward needs to change — every module in it already keys on `meta` and Nextflow
@@ -404,8 +422,15 @@ inline in this spec.
    this wiring is correct in general, not just for exactly one item.
 
 **`CNV_CORE`'s `take:` interface changes**: `tumor_cram_ch`/`normal_cram_ch` (raw CRAMs) are
-replaced by `tumor_counts_ch`/`normal_counts_ch` (pre-computed, already-deduplicated
-`COLLECT_READ_COUNTS` outputs, `[meta, counts_file]`). `ref_fasta_ch` is dropped from
+replaced by a single `tumor_counts_ch` (pre-computed, already-deduplicated
+`COLLECT_READ_COUNTS` output, `[meta, counts_file]`). There is deliberately **no**
+`normal_counts_ch`: nothing from `SUBSET_PAIR_VCF` onward ever read the normal's counts —
+already true in Phase 1, and WDL-faithful, since the WDL likewise runs `CollectReadCounts`
+on the normal without feeding it into the allelic-CN step (§4) — so now that
+`COLLECT_READ_COUNTS` runs role-uniformly over every sample there is no role-specific
+plumbing left that would justify threading a dead channel through the interface. The final
+`take:` is therefore `joint_vcf_ch, tumor_counts_ch, ref_dir_1000g, genetic_map, pon,
+ref_clinical, cohort_clinical`. `ref_fasta_ch` is dropped from
 `CNV_CORE`'s `take:` entirely — `PREPROCESS_INTERVALS` moves out with `COLLECT_READ_COUNTS`
 into the new sample-level subworkflow, since both are sample/reference-scoped, not
 pair-scoped. This is a breaking change to `CNV_CORE`'s external interface from Phase 1 —

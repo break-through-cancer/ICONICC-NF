@@ -45,8 +45,14 @@ Pairing is derived automatically: each patient must have exactly one `status: 0`
 row, which is crossed against every one of that patient's `status: 1` rows,
 producing one pair per tumor (a normal referenced by several tumors is paired,
 and its read counts computed, exactly once). A patient with more than one normal,
-a tumor with no matching normal, or a tumor/normal sex mismatch all fail fast with
-a named error rather than pairing silently incorrectly.
+a tumor with no matching normal, a tumor/normal sex mismatch, or a samplesheet that
+yields no pairs at all (for example, no tumor rows) all fail fast with a named error
+rather than pairing silently incorrectly or succeeding with no work.
+
+**Path resolution:** relative paths — both the `--input` samplesheet path itself and
+any relative path inside the CSV — resolve against the pipeline's own directory
+(Nextflow's `projectDir`), not against the directory you launch from; absolute paths,
+local or `s3://`, are recommended for real runs to avoid the ambiguity.
 
 Reference defaults that may be worth overriding:
 
