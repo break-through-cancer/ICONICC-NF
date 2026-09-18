@@ -1,0 +1,80 @@
+nextflow_pipeline {
+
+    name "Test main.nf pipeline wiring"
+    script "main.nf"
+    options "-stub"
+
+    // This is the first nf-test that ever loads main.nf itself (every other test in
+    // this repo runs an individual module/subworkflow in isolation), which is exactly
+    // why the gvcf_pairs_ch join-mismatch/duplicate bug this test guards against
+    // survived every other test in tests/subworkflows/. -stub lets
+    // PARABRICKS_HAPLOTYPECALLER, INDEX_GVCF and all four GATK4 joint-genotyping
+    // modules substitute their stub{} blocks (no GPU/network needed), so
+    // SAMPLE_GERMLINE_CALLING and JOINT_GENOTYPING actually run end to end and the new
+    // gvcf_pairs_ch wiring genuinely executes instead of being short-circuited by an
+    // earlier failure.
+    test("one normal backing two tumors reaches JOINT_GENOTYPING for both pairs without a join-mismatch/duplicate abort") {
+
+        when {
+            params {
+                input = "${projectDir}/tests/fixtures/samplesheet_to_pairs/multi_tumor.csv"
+                outdir = "${launchDir}/.nf-test-out/main_pipeline"
+
+                ref_fasta      = "${projectDir}/tests/fixtures/joint_genotyping/reference.fasta"
+                ref_fasta_fai  = "${projectDir}/tests/fixtures/joint_genotyping/reference.fasta.fai"
+                ref_fasta_dict = "${projectDir}/tests/fixtures/joint_genotyping/reference.dict"
+
+                calling_intervals = "${projectDir}/tests/fixtures/joint_genotyping/calling_intervals.list"
+
+                dbsnp_vcf                               = "${projectDir}/tests/fixtures/joint_genotyping/dbsnp.vcf.gz"
+                dbsnp_vcf_index                         = "${projectDir}/tests/fixtures/joint_genotyping/dbsnp.vcf.gz.tbi"
+                hapmap_resource_vcf                     = "${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz"
+                hapmap_resource_vcf_index               = "${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz.tbi"
+                omni_resource_vcf                       = "${projectDir}/tests/fixtures/joint_genotyping/resource2.vcf.gz"
+                omni_resource_vcf_index                 = "${projectDir}/tests/fixtures/joint_genotyping/resource2.vcf.gz.tbi"
+                one_thousand_genomes_resource_vcf       = "${projectDir}/tests/fixtures/joint_genotyping/resource3.vcf.gz"
+                one_thousand_genomes_resource_vcf_index = "${projectDir}/tests/fixtures/joint_genotyping/resource3.vcf.gz.tbi"
+                // mills/axiomPoly deliberately reuse resource4/resource1 -- they are
+                // never staged into the same task as hapmap/omni/kg (VARIANTRECALIBRATOR_SNP
+                // and VARIANTRECALIBRATOR_INDEL are separate process calls), so this is not
+                // the same kind of file-name collision Task 3's fixtures were designed to
+                // avoid within a single process call.
+                mills_resource_vcf                      = "${projectDir}/tests/fixtures/joint_genotyping/resource4.vcf.gz"
+                mills_resource_vcf_index                = "${projectDir}/tests/fixtures/joint_genotyping/resource4.vcf.gz.tbi"
+                axiomPoly_resource_vcf                   = "${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz"
+                axiomPoly_resource_vcf_index             = "${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz.tbi"
+
+                ref_dir_1000g   = "${projectDir}/tests/fixtures/main_pipeline/ref_dir_1000g.tar"
+                genetic_map     = "${projectDir}/tests/fixtures/main_pipeline/genetic_map.txt.gz"
+                pon             = "${projectDir}/tests/fixtures/main_pipeline/pon.rds"
+                ref_clinical    = "${projectDir}/tests/fixtures/main_pipeline/ref_clinical.txt"
+                cohort_clinical = "${projectDir}/tests/fixtures/main_pipeline/cohort_clinical.txt"
+            }
+        }
+
+        then {
+            // Do NOT assert workflow.success: this samplesheet still runs into the same
+            // pre-existing, already-documented SAMPLE_READ_COUNTS file-name collision gap
+            // (see tests/subworkflows/sample_read_counts.nf.test) further downstream, which
+            // is unrelated to this task and not something this test is meant to catch.
+            //
+            // What this test IS meant to catch: gvcf_pairs_ch's failOnDuplicate/
+            // failOnMismatch join guards firing on the normal GVCF that both pairs
+            // legitimately share, or the explicit "no matching GVCF" guard firing on a
+            // normal that genuinely does have one. Either would abort the run before
+            // JOINT_GENOTYPING ever starts, and neither should happen on this samplesheet.
+            def log = (workflow.stdout + workflow.stderr).join('\n')
+            assert !(log =~ /(?i)duplicate key/)
+            assert !(log =~ /(?i)failOnMismatch/)
+            assert !log.contains('no matching GVCF from SAMPLE_GERMLINE_CALLING')
+
+            // Positive evidence the join fanned out correctly: JOINT_GENOTYPING (via
+            // GATK4_GENOMICSDBIMPORT, its first step) must have started once per pair --
+            // one for the tumor_a/normal pair, one for tumor_b/normal -- not zero (the
+            // whole chain never reached JOINT_GENOTYPING) and not one (the fan-out
+            // collapsed to a single pair).
+            def gendb_tasks = workflow.trace.tasks().findAll { it.name.contains('GATK4_GENOMICSDBIMPORT') }
+            assert gendb_tasks.size() == 2
+        }
+    }
+}
