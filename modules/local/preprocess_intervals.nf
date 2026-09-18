@@ -19,4 +19,9 @@ process PREPROCESS_INTERVALS {
         --interval-merging-rule OVERLAPPING_ONLY \\
         --output wgs.preprocessed.interval_list
     """
+
+    stub:
+    """
+    touch wgs.preprocessed.interval_list
+    """
 }

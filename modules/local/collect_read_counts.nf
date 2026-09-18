@@ -30,4 +30,9 @@ process COLLECT_READ_COUNTS {
         --read-filter FirstOfPairReadFilter --read-filter MappingQualityReadFilter --minimum-mapping-quality 30 \\
         --read-filter OverclippedReadFilter --filter-too-short 50 --seconds-between-progress-updates 100
     """
+
+    stub:
+    """
+    touch ${sample_id}_counts.txt
+    """
 }
