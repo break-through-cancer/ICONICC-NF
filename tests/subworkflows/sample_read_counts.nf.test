@@ -3,7 +3,7 @@ nextflow_workflow {
     script "subworkflows/local/sample_read_counts/main.nf"
     workflow "SAMPLE_READ_COUNTS"
 
-    test("runs PREPROCESS_INTERVALS once and COLLECT_READ_COUNTS once per unique sample") {
+    test("wires every sample through PREPROCESS_INTERVALS and COLLECT_READ_COUNTS") {
         when {
             workflow {
                 """
@@ -16,7 +16,23 @@ nextflow_workflow {
             }
         }
         then {
-            assert !workflow.success // expected: no real CRAM fixture, GATK will fail on file content -- see note below
+            // Asserts the desired end state, the same convention as
+            // tests/subworkflows/cnv_core.nf.test: this FAILS today on a known, accepted
+            // gap -- no real CRAM fixture is staged, so the reference FASTA/fai are passed
+            // as stand-ins for the CRAM/CRAI, and COLLECT_READ_COUNTS then aborts on an
+            // input file name collision (the same two filenames arrive twice, once as the
+            // "CRAM" and once as the reference) before GATK even runs. Staging a real CRAM
+            // fixture clears this on its own (README.md, "Known gaps in this phase");
+            // PREPROCESS_INTERVALS, which needs only the reference, already succeeds.
+            // Do not "fix" it by flipping to !workflow.success: that reports green today for
+            // the wrong reason and turns red exactly when the pipeline becomes correct.
+            //
+            // Scope: this exercises the channel wiring only -- both samples reaching
+            // COLLECT_READ_COUNTS through the combine() with PREPROCESS_INTERVALS.out and
+            // the reference tuple. It deliberately asserts no invocation counts: nf-test
+            // stops at the first failed assertion, so any workflow.trace.tasks() count
+            // assertion would be dead code until the fixture gap closes.
+            assert workflow.success
         }
     }
 }
