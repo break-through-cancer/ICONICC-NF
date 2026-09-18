@@ -1,0 +1,4 @@
+patient,sample,sex,status,cram,crai,joint_vcf,joint_vcf_index
+PT01,PT01_normal,female,0,tests/fixtures/samplesheet_to_pairs/normal.cram,tests/fixtures/samplesheet_to_pairs/normal.cram.crai,,
+PT01,PT01_tumor_a,female,1,tests/fixtures/samplesheet_to_pairs/tumor_a.cram,tests/fixtures/samplesheet_to_pairs/tumor_a.cram.crai,tests/fixtures/samplesheet_to_pairs/tumor_a_vs_normal.vcf.gz,tests/fixtures/samplesheet_to_pairs/tumor_a_vs_normal.vcf.gz.tbi
+PT01,PT01_tumor_b,female,1,tests/fixtures/samplesheet_to_pairs/tumor_b.cram,tests/fixtures/samplesheet_to_pairs/tumor_b.cram.crai,tests/fixtures/samplesheet_to_pairs/tumor_b_vs_normal.vcf.gz,tests/fixtures/samplesheet_to_pairs/tumor_b_vs_normal.vcf.gz.tbi

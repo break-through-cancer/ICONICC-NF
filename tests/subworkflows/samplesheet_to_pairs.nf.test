@@ -1,0 +1,78 @@
+nextflow_workflow {
+    name "Test SAMPLESHEET_TO_PAIRS"
+    script "subworkflows/local/samplesheet_to_pairs/main.nf"
+    workflow "SAMPLESHEET_TO_PAIRS"
+
+    test("one normal + two tumors produces two pairs sharing the same normal, and the normal appears exactly once in the samples channel") {
+        when {
+            workflow {
+                """
+                input[0] = "tests/fixtures/samplesheet_to_pairs/multi_tumor.csv"
+                """
+            }
+        }
+        then {
+            assert workflow.success
+            assert workflow.out.samples.size() == 3
+            assert workflow.out.pairs.size() == 2
+
+            def pair_metas = workflow.out.pairs.collect { it[0] }
+            assert pair_metas*.participant_id.sort() == ["PT01_tumor_a_vs_PT01_normal", "PT01_tumor_b_vs_PT01_normal"]
+            assert pair_metas.every { it.normal_sample_id == "PT01_normal" }
+            assert pair_metas*.tumor_sample_id.sort() == ["PT01_tumor_a", "PT01_tumor_b"]
+            assert pair_metas.every { it.sample_sex == "female" }
+
+            def sample_metas = workflow.out.samples.collect { it[0] }
+            assert sample_metas.count { it.sample == "PT01_normal" } == 1
+        }
+    }
+
+    test("a single normal + single tumor produces exactly one pair (Phase 1's original case, unchanged behavior)") {
+        when {
+            workflow {
+                """
+                input[0] = "tests/fixtures/samplesheet_to_pairs/single_pair.csv"
+                """
+            }
+        }
+        then {
+            assert workflow.success
+            assert workflow.out.samples.size() == 2
+            assert workflow.out.pairs.size() == 1
+
+            def pair_meta = workflow.out.pairs[0][0]
+            assert pair_meta.participant_id == "PT04_tumor_vs_PT04_normal"
+            assert pair_meta.normal_sample_id == "PT04_normal"
+            assert pair_meta.tumor_sample_id == "PT04_tumor"
+            assert pair_meta.sample_sex == "male"
+        }
+    }
+
+    test("a patient with two normal rows is a hard error") {
+        when {
+            workflow {
+                """
+                input[0] = "tests/fixtures/samplesheet_to_pairs/two_normals.csv"
+                """
+            }
+        }
+        then {
+            assert !workflow.success
+            assert workflow.stdout.join("\n").contains("more than one normal")
+        }
+    }
+
+    test("a tumor/normal sex mismatch within a patient is a hard error") {
+        when {
+            workflow {
+                """
+                input[0] = "tests/fixtures/samplesheet_to_pairs/sex_mismatch.csv"
+                """
+            }
+        }
+        then {
+            assert !workflow.success
+            assert workflow.stdout.join("\n").contains("Sex mismatch")
+        }
+    }
+}
