@@ -1,9 +1,11 @@
 // main.nf
 nextflow.enable.dsl = 2
 
-include { SAMPLESHEET_TO_PAIRS } from './subworkflows/local/samplesheet_to_pairs/main'
-include { SAMPLE_READ_COUNTS   } from './subworkflows/local/sample_read_counts/main'
-include { CNV_CORE             } from './subworkflows/local/cnv_core/main'
+include { SAMPLESHEET_TO_PAIRS   } from './subworkflows/local/samplesheet_to_pairs/main'
+include { SAMPLE_READ_COUNTS     } from './subworkflows/local/sample_read_counts/main'
+include { SAMPLE_GERMLINE_CALLING } from './subworkflows/local/sample_germline_calling/main'
+include { JOINT_GENOTYPING       } from './subworkflows/local/joint_genotyping/main'
+include { CNV_CORE               } from './subworkflows/local/cnv_core/main'
 
 workflow {
     if (!params.input) {
@@ -20,29 +22,70 @@ workflow {
 
     SAMPLE_READ_COUNTS(SAMPLESHEET_TO_PAIRS.out.samples, ref_fasta_ch)
 
-    // The VCF side goes straight into CNV_CORE, unjoined. CNV_CORE's phasing chain
-    // (SUBSET_PAIR_VCF -> FILTER_VARIANTS -> ITER_ISEC -> HETVAR_FILTER -> EAGLE_PHASING)
-    // consumes no read-counts data at all, so routing it through the counts join below
-    // would gate hours of phasing behind that pair's tumor COLLECT_READ_COUNTS (a GATK
-    // job over a full WGS CRAM) for no reason. Feeding it from `pairs` directly lets
-    // phasing start as soon as the samplesheet is parsed, while read-counting runs in
-    // parallel; the two sides rejoin inside CNV_CORE. That rejoin still matches because
-    // Nextflow's .join() keys on map equality, not object identity -- the pair_meta here
-    // and the pair_meta carried through the join below are the same value.
-    joint_vcf_ch = SAMPLESHEET_TO_PAIRS.out.pairs // [ pair_meta, joint_vcf, joint_vcf_index ]
+    calling_intervals_ch = Channel.value(file(params.calling_intervals, checkIfExists: true))
 
-    // Join each pair to its tumor's already-computed (and, when a normal is shared
-    // across several pairs, already-deduplicated) read counts. Keyed on a small
-    // (patient, sample) map rather than the full meta, since pair_meta and sample_meta
-    // are different shapes -- constructing the same-shaped key on both sides is what
-    // makes the .join() match, the same principle as every meta-keyed join already in
-    // this codebase (see subworkflows/local/cnv_core/main.nf's take: comment).
-    // sample_counts holds both tumor and normal rows; filtered to status == 1 (tumor)
-    // here since only the tumor's counts feed CNV_CORE, and because leaving normals in
-    // would let a normal's [patient, sample] key coincidentally collide with a
-    // differently-keyed lookup. failOnMismatch: true turns any pair whose tumor has no
-    // matching counts entry into a hard, named error instead of a silent drop -- the
-    // exact failure mode a .join() defaults to (remainder: false) on a non-match.
+    SAMPLE_GERMLINE_CALLING(
+        SAMPLESHEET_TO_PAIRS.out.samples,
+        Channel.value(file(params.ref_fasta, checkIfExists: true)),
+        calling_intervals_ch
+    )
+
+    // Join each pair to its normal's and tumor's GVCFs by (patient, sample) -- the same
+    // pattern as tumor_counts_ch below, done for both roles (SPEC.md Sec12.1).
+    sample_gvcfs_by_key = SAMPLE_GERMLINE_CALLING.out.sample_gvcfs
+        .map { meta, gvcf, tbi -> [ [patient: meta.patient, sample: meta.sample], gvcf, tbi ] }
+
+    gvcf_pairs_ch = SAMPLESHEET_TO_PAIRS.out.pairs
+        .map { pair_meta, _jv, _jvi -> [ [patient: pair_meta.patient, sample: pair_meta.normal_sample_id], pair_meta ] }
+        .join(sample_gvcfs_by_key, by: 0, failOnDuplicate: true, failOnMismatch: true)
+        .map { _key, pair_meta, normal_gvcf, normal_tbi -> [ [patient: pair_meta.patient, sample: pair_meta.tumor_sample_id], pair_meta, normal_gvcf, normal_tbi ] }
+        .join(sample_gvcfs_by_key, by: 0, failOnDuplicate: true, failOnMismatch: true)
+        .map { _key, pair_meta, normal_gvcf, normal_tbi, tumor_gvcf, tumor_tbi -> [ pair_meta, normal_gvcf, normal_tbi, tumor_gvcf, tumor_tbi ] }
+
+    dbsnp_ch = Channel.value([
+        file(params.dbsnp_vcf, checkIfExists: true),
+        file(params.dbsnp_vcf_index, checkIfExists: true)
+    ])
+
+    def hapmap_vcf   = file(params.hapmap_resource_vcf, checkIfExists: true)
+    def omni_vcf     = file(params.omni_resource_vcf, checkIfExists: true)
+    def kg_vcf       = file(params.one_thousand_genomes_resource_vcf, checkIfExists: true)
+    def dbsnp_vcf    = file(params.dbsnp_vcf, checkIfExists: true)
+    def mills_vcf    = file(params.mills_resource_vcf, checkIfExists: true)
+    def axiompoly_vcf = file(params.axiomPoly_resource_vcf, checkIfExists: true)
+
+    snp_resources_ch = Channel.value([
+        [ hapmap_vcf, omni_vcf, kg_vcf, dbsnp_vcf ],
+        [ file(params.hapmap_resource_vcf_index, checkIfExists: true), file(params.omni_resource_vcf_index, checkIfExists: true), file(params.one_thousand_genomes_resource_vcf_index, checkIfExists: true), file(params.dbsnp_vcf_index, checkIfExists: true) ],
+        [
+            "--resource:hapmap,known=false,training=true,truth=true,prior=15.0 ${hapmap_vcf.name}",
+            "--resource:omni,known=false,training=true,truth=true,prior=12.0 ${omni_vcf.name}",
+            "--resource:1000G,known=false,training=true,truth=false,prior=10.0 ${kg_vcf.name}",
+            "--resource:dbsnp,known=true,training=false,truth=false,prior=7.0 ${dbsnp_vcf.name}"
+        ]
+    ])
+
+    indel_resources_ch = Channel.value([
+        [ mills_vcf, axiompoly_vcf, dbsnp_vcf ],
+        [ file(params.mills_resource_vcf_index, checkIfExists: true), file(params.axiomPoly_resource_vcf_index, checkIfExists: true), file(params.dbsnp_vcf_index, checkIfExists: true) ],
+        [
+            "--resource:mills,known=false,training=true,truth=true,prior=12.0 ${mills_vcf.name}",
+            "--resource:axiomPoly,known=false,training=true,truth=false,prior=10.0 ${axiompoly_vcf.name}",
+            "--resource:dbsnp,known=true,training=false,truth=false,prior=2.0 ${dbsnp_vcf.name}"
+        ]
+    ])
+
+    JOINT_GENOTYPING(
+        gvcf_pairs_ch,
+        ref_fasta_ch,
+        calling_intervals_ch,
+        dbsnp_ch,
+        snp_resources_ch,
+        indel_resources_ch
+    )
+
+    joint_vcf_ch = JOINT_GENOTYPING.out.joint_vcf // [ pair_meta, vcf, tbi ]
+
     tumor_counts_ch = SAMPLESHEET_TO_PAIRS.out.pairs
         .map { pair_meta, _jv, _jvi ->
             [ [patient: pair_meta.patient, sample: pair_meta.tumor_sample_id], pair_meta ]
