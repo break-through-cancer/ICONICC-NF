@@ -5,8 +5,10 @@ joint-genotyping followed by a haplotype-based allelic copy-number (CNV) analysi
 
 See `SPEC.md` for the full design. Two logical halves:
 
-1. Per-sample germline calling (Parabricks) + joint genotyping/VQSR (reuses
-   nf-core/sarek's `BAM_JOINT_CALLING_GERMLINE_GATK` subworkflow directly).
+1. Per-sample germline calling (`SAMPLE_GERMLINE_CALLING`, Parabricks HaplotypeCaller)
+   + joint genotyping/VQSR (`JOINT_GENOTYPING`, GATK4 modules vendored from
+   nf-core/sarek and composed with this pipeline's own no-scatter orchestration —
+   see `SPEC.md` §12).
 2. The CNV/allelic-analysis core, hand-ported from `ICON_Tasks.2.wdl` — the actual
    science; see `subworkflows/local/cnv_core/`.
 
@@ -39,7 +41,6 @@ full rationale in `SPEC.md` §11.
 | `sex` | always | `female` or `male`. |
 | `status` | always | `0` = normal, `1` = tumor. |
 | `cram` / `crai` | always | The sample's recalibrated CRAM from `sarek_align`. |
-| `joint_vcf` / `joint_vcf_index` | tumor rows only | Transitional: the joint-genotyped, VQSR-filtered VCF for that tumor's pair with its patient's normal. Ignored on normal rows. Once Phase 2 (`SPEC.md` §5) lands, these two columns are computed by the pipeline instead of supplied, and will disappear from the schema. |
 
 Pairing is derived automatically: each patient must have exactly one `status: 0`
 row, which is crossed against every one of that patient's `status: 1` rows,
@@ -65,6 +66,9 @@ Reference defaults that may be worth overriding:
 | `--genetic_map` | `s3://btc-refdata/iconicc/reference-genome-genetic_map_hg38_withX.txt.gz` |
 | `--pon` | `s3://btc-refdata/iconicc/BTC_pon.rds` |
 | `--ref_clinical` / `--cohort_clinical` | `s3://btc-refdata/iconicc/...` |
+| `--calling_intervals` | `s3://gatk-test-data/intervals/hg38.even.handcurated.20k.intervals` |
+| `--dbsnp_vcf` / `--dbsnp_vcf_index` | `s3://broad-references/hg38/v0/...` |
+| `--hapmap_resource_vcf` / `--omni_resource_vcf` / `--one_thousand_genomes_resource_vcf` / `--mills_resource_vcf` / `--axiomPoly_resource_vcf` (each with a matching `_index`) | `s3://broad-references/hg38/v0/...` |
 
 Only the five final outputs named in `SPEC.md` §6 are published to `--outdir`:
 `read_depth`, `seg_file`, `ac_cts`, `segment_plots`, `segment_cts`. Publishing is
@@ -79,9 +83,9 @@ nf-test test
 
 ## Known gaps in this phase
 
-Two prerequisites are deliberately unresolved. Both are accepted for this phase, and
-together they mean most module-level tests and the subworkflow-level test cannot fully
-pass yet. The pipeline code itself is complete and reviewed.
+Three prerequisites are deliberately unresolved. All three are accepted for this phase,
+and together they mean most module-level tests and the subworkflow-level test cannot
+fully pass yet. The pipeline code itself is complete and reviewed.
 
 **1. Real fixture data is not staged.** `tests/fixtures/cnv_core/` holds only a README;
 no patient genomic data has been copied into it, and the directory is gitignored so that
@@ -96,3 +100,12 @@ stage them.
 Dockerfile exists but the image has never been built or published, so those three
 processes cannot run anywhere yet, locally or remotely. See
 **`containers/iconicc-cnv-r/README.md`** for the build and publish commands.
+
+**3. No real Parabricks/NGC execution has been validated.** This dev environment (and
+the dev's own machine, confirmed) has no NVIDIA GPU, so `SAMPLE_GERMLINE_CALLING`'s
+wiring is tested via nf-test's `-stub` flag rather than a real `pbrun` run. Real
+Parabricks validation can only happen on Cirro/AWS against an actual GPU instance —
+where it was always going to run in production anyway. `JOINT_GENOTYPING`'s GATK4 chain
+also has no real fixture: VQSR's Gaussian mixture model cannot fit on a handful of
+variants regardless of container or network access, so its tests assert the desired end
+state against placeholder fixtures, the same convention as gap 1 above.
