@@ -1,6 +1,6 @@
 FROM bioconductor/bioconductor_docker:RELEASE_3_20
 
-RUN echo 'options(repos = c(CRAN = "https://packagemanager.posit.co/cran/2025-01-15"))' \
+RUN echo 'options(repos = c(CRAN = "https://packagemanager.posit.co/cran/__linux__/noble/2025-01-15"))' \
     >> /usr/local/lib/R/etc/Rprofile.site
 
 RUN Rscript -e 'install.packages(c( \
