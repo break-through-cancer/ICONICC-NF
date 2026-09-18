@@ -1,0 +1,24 @@
+nextflow_process {
+    name "Test iter_isec"
+    script "modules/local/iter_isec.nf"
+    process "ITER_ISEC"
+
+    test("produces one private-variant VCF per autosome+X") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT'],
+                    file("${projectDir}/tests/fixtures/cnv_core/HC_var.vcf.gz"),
+                    file("${projectDir}/tests/fixtures/cnv_core/HC_var.vcf.gz.tbi"),
+                    file(params.ref_dir_1000g)
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert path(process.out[0].get(0)[1]).size() == 23  // chr1-22 + chrX
+        }
+    }
+}
