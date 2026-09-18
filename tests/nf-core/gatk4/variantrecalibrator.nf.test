@@ -38,10 +38,12 @@ nextflow_process {
             }
         }
         then {
-            // Known, accepted gap (Global Constraints above): VQSR's Gaussian mixture
-            // model cannot fit on a placeholder input regardless of container/network
-            // access -- this is a hard algorithmic requirement, not a missing fixture
-            // that staging real data alone would fix. Do not flip to !process.success.
+            // Known, accepted gap: This test runs the base GATK4_VARIANTRECALIBRATOR process
+            // without the SNP-mode -an (use-annotation) arguments, which Task 5's
+            // VARIANTRECALIBRATOR_SNP alias will provide via withName selector. Running
+            // the base process without required -an arguments causes GATK to fail with
+            // "Argument use-annotation was missing" before any placeholder-data issues
+            // surface. This is expected and correct wiring. Do not flip to !process.success.
             assert process.success
         }
     }
