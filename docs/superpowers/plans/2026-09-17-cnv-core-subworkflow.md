@@ -1267,6 +1267,15 @@ Expected: FAIL
 
 `container` uses `params.cnv_r_container` (Task 2), not a hardcoded image string:
 
+**Critical staging detail**: `bin/ac_calc.R` (the vendored script — see its lines ~129-136)
+identifies which of its trailing positional file arguments are phased-GT vs. allelic-depth
+vs. hetinfo by calling `unique(dirname(all_input_files))` and taking directories `[1]`,
+`[2]`, `[3]` in that order — it assumes each file group was localized into its own directory
+(true under Cromwell's per-`Array[File]` localization, which is what the WDL relied on).
+Nextflow's default staging puts every declared `path` input flat in one task work directory,
+which would collapse `unique(dirname(...))` to a single directory and silently corrupt the
+script's file lookups. Reproduce the three-directory grouping explicitly with `stageAs`:
+
 ```groovy
 // modules/local/ac_calc.nf
 process AC_CALC {
@@ -1275,7 +1284,7 @@ process AC_CALC {
     memory '4 GB'
 
     input:
-    tuple val(meta), path(tumor_counts), path(phased_files), path(ad_files), path(hetinfo_files)
+    tuple val(meta), path(tumor_counts), path(phased_files, stageAs: 'phased/*'), path(ad_files, stageAs: 'ad/*'), path(hetinfo_files, stageAs: 'hetinfo/*')
 
     output:
     tuple val(meta), path("*_read_depth.txt"), path("*_allelic_counts.txt"), path("*_plots.pdf")
@@ -1292,6 +1301,12 @@ process AC_CALC {
     """
 }
 ```
+
+`${phased_files}`/`${ad_files}`/`${hetinfo_files}` still interpolate to the staged paths
+(now `phased/<name>`, `ad/<name>`, `hetinfo/<name>`), so `unique(dirname(all_input_files))`
+in the R script yields exactly `[phased/, ad/, hetinfo/]` in that order — matching
+`directories[1]`/`[2]`/`[3]` and the argument order the `Rscript` call already passes them
+in (phased, then AD, then hetinfo).
 
 - [ ] **Step 5: Run it, verify it passes**
 
