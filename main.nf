@@ -26,14 +26,21 @@ workflow {
     // are different shapes -- constructing the same-shaped key on both sides is what
     // makes the .join() match, the same principle as every meta-keyed join already in
     // this codebase (see subworkflows/local/cnv_core/main.nf's take: comment).
+    // sample_counts holds both tumor and normal rows; filtered to status == 1 (tumor)
+    // here since only the tumor's counts feed CNV_CORE, and because leaving normals in
+    // would let a normal's [patient, sample] key coincidentally collide with a
+    // differently-keyed lookup. failOnMismatch: true turns any pair whose tumor has no
+    // matching counts entry into a hard, named error instead of a silent drop -- the
+    // exact failure mode a .join() defaults to (remainder: false) on a non-match.
     tumor_counts_for_pairs = SAMPLESHEET_TO_PAIRS.out.pairs
         .map { pair_meta, jv, jvi ->
             [ [patient: pair_meta.patient, sample: pair_meta.tumor_sample_id], pair_meta, jv, jvi ]
         }
         .join(
             SAMPLE_READ_COUNTS.out.sample_counts
+                .filter { sample_meta, _counts -> sample_meta.status == 1 }
                 .map { sample_meta, counts -> [ [patient: sample_meta.patient, sample: sample_meta.sample], counts ] },
-            by: 0, failOnDuplicate: true
+            by: 0, failOnDuplicate: true, failOnMismatch: true
         )
         .map { _key, pair_meta, jv, jvi, counts -> [ pair_meta, jv, jvi, counts ] }
 
