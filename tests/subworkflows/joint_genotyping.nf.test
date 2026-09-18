@@ -1,0 +1,81 @@
+nextflow_workflow {
+    name "Test JOINT_GENOTYPING"
+    script "subworkflows/local/joint_genotyping/main.nf"
+    workflow "JOINT_GENOTYPING"
+
+    test("produces one joint-genotyped, VQSR-filtered VCF per pair") {
+        when {
+            workflow {
+                """
+                def pair_meta = [
+                    participant_id: 'TEST_TUMOR_vs_TEST_NORMAL',
+                    patient: 'TEST_PATIENT',
+                    normal_sample_id: 'TEST_NORMAL',
+                    tumor_sample_id: 'TEST_TUMOR',
+                    sample_sex: 'female'
+                ]
+                input[0] = Channel.of([
+                    pair_meta,
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_normal.g.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_normal.g.vcf.gz.tbi"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_tumor.g.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/placeholder_tumor.g.vcf.gz.tbi")
+                ])
+                input[1] = Channel.value([
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/reference.fasta"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/reference.fasta.fai"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/reference.dict")
+                ])
+                input[2] = Channel.value(file("\${projectDir}/tests/fixtures/joint_genotyping/calling_intervals.list"))
+                input[3] = Channel.value([
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/dbsnp.vcf.gz"),
+                    file("\${projectDir}/tests/fixtures/joint_genotyping/dbsnp.vcf.gz.tbi")
+                ])
+                input[4] = Channel.value([
+                    [
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource2.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource3.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource4.vcf.gz")
+                    ],
+                    [
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource2.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource3.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource4.vcf.gz.tbi")
+                    ],
+                    [ '--resource:hapmap,known=false,training=true,truth=true,prior=15.0 x', '--resource:omni,known=false,training=true,truth=true,prior=12.0 x', '--resource:1000G,known=false,training=true,truth=false,prior=10.0 x', '--resource:dbsnp,known=true,training=false,truth=false,prior=7.0 x' ]
+                ])
+                input[5] = Channel.value([
+                    [
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource2.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource3.vcf.gz")
+                    ],
+                    [
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource1.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource2.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/joint_genotyping/resource3.vcf.gz.tbi")
+                    ],
+                    [ '--resource:mills,known=false,training=true,truth=true,prior=12.0 x', '--resource:axiomPoly,known=false,training=true,truth=false,prior=10.0 x', '--resource:dbsnp,known=true,training=false,truth=false,prior=2.0 x' ]
+                ])
+                """
+            }
+        }
+        then {
+            // Known, accepted gap (Global Constraints above): the GVCF fixtures are
+            // 0-byte placeholders (same convention as tests/nf-core/gatk4/genomicsdbimport.nf.test),
+            // so GATK4_GENOMICSDBIMPORT fails immediately on malformed VCF content
+            // ("We never saw the required CHROM header line") -- the same accepted gap
+            // documented for that module's own test, just surfaced at the first step of
+            // this subworkflow's chain instead of in isolation. Even if the fixtures had a
+            // valid header, VariantRecalibrator's Gaussian mixture model could not fit on
+            // stand-in resource files and near-empty joint-called data further down the
+            // chain regardless of container or network access -- a hard algorithmic
+            // requirement, not a fixture-staging gap. Real fixture data closes this the
+            // same way it closes tests/subworkflows/cnv_core.nf.test. Do not flip to
+            // !workflow.success.
+            assert workflow.success
+        }
+    }
+}
