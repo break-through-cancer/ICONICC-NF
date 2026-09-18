@@ -75,4 +75,18 @@ nextflow_workflow {
             assert workflow.stdout.join("\n").contains("Sex mismatch")
         }
     }
+
+    test("a tumor whose patient has no normal row at all is a hard error") {
+        when {
+            workflow {
+                """
+                input[0] = "tests/fixtures/samplesheet_to_pairs/orphan_tumor.csv"
+                """
+            }
+        }
+        then {
+            assert !workflow.success
+            assert workflow.stdout.join("\n").contains("no matching normal")
+        }
+    }
 }

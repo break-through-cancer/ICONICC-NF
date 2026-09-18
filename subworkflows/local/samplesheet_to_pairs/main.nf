@@ -20,9 +20,29 @@ workflow SAMPLESHEET_TO_PAIRS {
             [ patient, metas[0] ]
         }
 
+    // Broadcast the full set of patients that DO have a normal to every tumor row, so a
+    // tumor whose patient has zero normal rows (typo'd patient column, or a genuinely
+    // missing normal) is a hard error rather than silently vanishing from `pairs` --
+    // `.cross()` below only emits matches, so an unmatched tumor would otherwise produce
+    // no pair and no diagnostic at all. This mirrors the existing hard-error-on->1-normal
+    // check, per SPEC.md Sec11.1: fail loudly on samplesheet problems, never skip silently.
+    // The list is wrapped in a Map before `.combine()`: combine() flattens a bare List
+    // value from the other channel into separate trailing tuple positions (confirmed
+    // empirically -- with zero normals this produces zero trailing elements instead of
+    // one empty list, breaking the downstream closure's arity), but a Map is passed
+    // through as a single opaque element.
+    normal_patients_ch = normal_ch.map { patient, _meta -> patient }.toList().map { [normals: it] }
+
     tumor_ch = rows
         .filter { meta, _cram, _crai, _jv, _jvi -> meta.status == 1 }
         .map { meta, _cram, _crai, jv, jvi -> [ meta.patient, meta, jv, jvi ] }
+        .combine(normal_patients_ch)
+        .map { patient, meta, jv, jvi, wrapper ->
+            if (!(patient in wrapper.normals)) {
+                error "Tumor sample '${meta.sample}' (patient '${patient}') has no matching normal (status=0) sample in the samplesheet"
+            }
+            [ patient, meta, jv, jvi ]
+        }
 
     // Sarek's own pattern (workflows/sarek.nf in the vendored reference copy): cross a
     // patient's single normal against every one of that patient's tumors. One normal +
@@ -89,12 +109,16 @@ def validateSamplesheetRow(row) {
 // ambient launch/working directory would break every fixture-driven test). `projectDir`
 // is Nextflow's own implicit variable for the directory containing the pipeline's entry
 // script, which is stable across both real invocations and nf-test's isolated execution.
-// Absolute paths are passed through unchanged. Note: we must check the ORIGINAL string
-// for a leading '/', not `file(p).isAbsolute()` -- Nextflow's `file()` always returns an
-// absolute Path (it eagerly resolves relative strings against the ambient launch/working
-// directory before we ever get to inspect them), so checking absoluteness on the already-
-// constructed Path is always true and silently defeats this whole function.
+// Absolute paths -- including URI-scheme paths like `s3://...`, `gs://...`,
+// `https://...` (SPEC.md Sec11.2's canonical samplesheet uses s3:// for every file
+// column) -- are passed through unchanged. Note: we must check the ORIGINAL string
+// for a leading '/' or a URI scheme, not `file(p).isAbsolute()` -- Nextflow's `file()`
+// always returns an absolute Path (it eagerly resolves relative strings against the
+// ambient launch/working directory before we ever get to inspect them), so checking
+// absoluteness on the already-constructed Path is always true and silently defeats
+// this whole function.
 def resolveRelativeToProjectDir(p) {
     def s = p.toString()
-    s.startsWith('/') ? file(s) : file("${projectDir}/${s}")
+    def isAbsolute = s.startsWith('/') || s ==~ /^[a-zA-Z][a-zA-Z0-9+.\-]*:\/\/.*/
+    isAbsolute ? file(s) : file("${projectDir}/${s}")
 }
