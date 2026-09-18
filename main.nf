@@ -3,6 +3,15 @@ nextflow.enable.dsl = 2
 include { CNV_CORE } from './subworkflows/local/cnv_core/main'
 
 workflow {
+    def required_params = [
+        'participant_id', 'normal_sample_id', 'tumor_sample_id', 'sample_sex',
+        'joint_vcf', 'joint_vcf_index', 'tumor_cram', 'tumor_crai', 'normal_cram', 'normal_crai'
+    ]
+    def missing = required_params.findAll { !params[it] }
+    if (missing) {
+        error "Missing required parameter(s): ${missing.join(', ')}. Pass them via --<param_name>."
+    }
+
     // One uniform per-participant meta, reused unchanged everywhere CNV_CORE needs it --
     // see the note in subworkflows/local/cnv_core/main.nf's `take:` block for why this
     // has to stay a single identical map across every channel for .join() to work.
