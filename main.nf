@@ -1,51 +1,48 @@
+// main.nf
 nextflow.enable.dsl = 2
 
-include { CNV_CORE } from './subworkflows/local/cnv_core/main'
+include { SAMPLESHEET_TO_PAIRS } from './subworkflows/local/samplesheet_to_pairs/main'
+include { SAMPLE_READ_COUNTS   } from './subworkflows/local/sample_read_counts/main'
+include { CNV_CORE             } from './subworkflows/local/cnv_core/main'
 
 workflow {
-    def required_params = [
-        'participant_id', 'normal_sample_id', 'tumor_sample_id', 'sample_sex',
-        'joint_vcf', 'joint_vcf_index', 'tumor_cram', 'tumor_crai', 'normal_cram', 'normal_crai'
-    ]
-    def missing = required_params.findAll { !params[it] }
-    if (missing) {
-        error "Missing required parameter(s): ${missing.join(', ')}. Pass them via --<param_name>."
+    if (!params.input) {
+        error "Missing required parameter: input (path to samplesheet CSV). See README.md and assets/samplesheet.csv."
     }
 
-    // One uniform per-participant meta, reused unchanged everywhere CNV_CORE needs it --
-    // see the note in subworkflows/local/cnv_core/main.nf's `take:` block for why this
-    // has to stay a single identical map across every channel for .join() to work.
-    meta = [
-        participant_id: params.participant_id,
-        normal_sample_id: params.normal_sample_id,
-        tumor_sample_id: params.tumor_sample_id,
-        sample_sex: params.sample_sex,
-        scale_method: 'median', fix_outliers: false, trailingN: 5, n_dim: 10,
-        smooth_region: 10, outlier_SD: 4, smooth_SD: 2, alpha: 0.01, min_width: 2,
-        undo_split: 'none', undo_prune: 0.05, undo_SD: 2, recovery_thresh: 20,
-        use_het: true, miss_thresh: 1.0, agg_bins: false, desired_binsize: null
-    ]
+    SAMPLESHEET_TO_PAIRS(params.input)
 
-    // checkIfExists on every input: a wrong or unstaged path fails here, at
-    // startup, naming the offending file -- instead of being staged as a
-    // dangling reference and surfacing much later as an opaque bcftools/htslib
-    // error from inside a task container.
-    joint_vcf_ch   = Channel.of([ meta,
-        file(params.joint_vcf, checkIfExists: true),
-        file(params.joint_vcf_index, checkIfExists: true) ])
-    tumor_cram_ch  = Channel.of([ meta,
-        file(params.tumor_cram, checkIfExists: true),
-        file(params.tumor_crai, checkIfExists: true) ])
-    normal_cram_ch = Channel.of([ meta,
-        file(params.normal_cram, checkIfExists: true),
-        file(params.normal_crai, checkIfExists: true) ])
-    ref_fasta_ch   = Channel.of([
+    ref_fasta_ch = Channel.of([
         file(params.ref_fasta, checkIfExists: true),
         file(params.ref_fasta_fai, checkIfExists: true),
-        file(params.ref_fasta_dict, checkIfExists: true) ])
+        file(params.ref_fasta_dict, checkIfExists: true)
+    ])
+
+    SAMPLE_READ_COUNTS(SAMPLESHEET_TO_PAIRS.out.samples, ref_fasta_ch)
+
+    // Join each pair to its tumor's already-computed (and, when a normal is shared
+    // across several pairs, already-deduplicated) read counts. Keyed on a small
+    // (patient, sample) map rather than the full meta, since pair_meta and sample_meta
+    // are different shapes -- constructing the same-shaped key on both sides is what
+    // makes the .join() match, the same principle as every meta-keyed join already in
+    // this codebase (see subworkflows/local/cnv_core/main.nf's take: comment).
+    tumor_counts_for_pairs = SAMPLESHEET_TO_PAIRS.out.pairs
+        .map { pair_meta, jv, jvi ->
+            [ [patient: pair_meta.patient, sample: pair_meta.tumor_sample_id], pair_meta, jv, jvi ]
+        }
+        .join(
+            SAMPLE_READ_COUNTS.out.sample_counts
+                .map { sample_meta, counts -> [ [patient: sample_meta.patient, sample: sample_meta.sample], counts ] },
+            by: 0, failOnDuplicate: true
+        )
+        .map { _key, pair_meta, jv, jvi, counts -> [ pair_meta, jv, jvi, counts ] }
+
+    joint_vcf_ch    = tumor_counts_for_pairs.map { pair_meta, jv, jvi, _counts -> [ pair_meta, jv, jvi ] }
+    tumor_counts_ch = tumor_counts_for_pairs.map { pair_meta, _jv, _jvi, counts -> [ pair_meta, counts ] }
 
     CNV_CORE(
-        joint_vcf_ch, tumor_cram_ch, normal_cram_ch, ref_fasta_ch,
+        joint_vcf_ch,
+        tumor_counts_ch,
         Channel.value(file(params.ref_dir_1000g, checkIfExists: true)),
         Channel.value(file(params.genetic_map, checkIfExists: true)),
         Channel.value(file(params.pon, checkIfExists: true)),
