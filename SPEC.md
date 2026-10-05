@@ -671,3 +671,127 @@ in `JOINT_GENOTYPING` use public containers, so those may run for real in nf-tes
 Docker/network access allows during implementation — verify empirically rather than assume
 (this pipeline's own precedent: the CRLF/shebang bug and the `--clin` flag both turned out
 differently than assumed until actually checked against the real thing).
+
+## 13. Cirro wiring (Phase 3)
+
+Deploys this pipeline as an actual Cirro process, matching how `sarek_align`/
+`sarek_call_variants` are already deployed (both live in `CirroBio/Cirro-pipelines`,
+inspected directly for real precedent rather than designed from scratch). `.cirro/` files
+live in this same repo, not a separate one — confirmed with the dev during Phase 2's
+wrap-up.
+
+### 13.1 Upstream chain and parent process
+
+Real pipeline chain, now confirmed end-to-end: `sarek_align` → `parabricks_bqsr`
+(`break-through-cancer/parabricks-bqsr`, a separate repo, built independently of this
+one) → this pipeline. `parabricks_bqsr` applies BQSR genome-wide (no interval
+restriction, so unmapped reads still get recalibrated) and optionally quantizes quality
+scores to replicate GATK `ApplyBQSR`'s `--static-quantized-quals`; its real, confirmed
+output shape is `preprocessing/recalibrated/<sample>/<sample>.recal.cram(+.crai)` — a real
+completed run was inspected directly via the Cirro Python SDK (project
+`af54fa61-9e6c-4b87-9922-3c2c073aeaaa`, dataset `a89df334-e188-4b55-a50a-8d4ac3d6e08e`,
+process `dlt-parabricks-bqsr`, status `COMPLETED`) to confirm this rather than assume it
+from the spec alone.
+
+**Resolved**: ICONICC-NF declares `parabricks_bqsr`'s alignment-entry process (the one
+that accepts an already-aligned BAM/CRAM and emits the recalibrated+quantized CRAM above
+— not its separate fastq-entry process, which handles alignment itself upstream of that)
+as its sole Cirro parent process. `sarek_align` is not declared as a parent directly —
+every real input to this pipeline has gone through BQSR+optional quantization first, so
+there is no supported path that skips `parabricks_bqsr`.
+
+### 13.2 Samplesheet assembly (`preprocess.py`)
+
+Real precedent: `nf-core/sarek_call_variants`'s own `preprocess.py`
+(`CirroBio/Cirro-pipelines`, `nf-core/sarek_call_variants/3/`) already solves this exact
+problem for sarek's own `patient,sex,status,sample` samplesheet shape — read directly
+rather than designed blind. Two Cirro-native building blocks it relies on, both reused
+here unchanged:
+
+- **`ds.files` + `fileMappingRules`**: auto-discovers indexed BAM/CRAM pairs per sample
+  from the selected input dataset's files, via path/suffix pattern matching
+  (`preprocessing/<stage>/<sample>/...` or a `.recal.`/`.md.` suffix). Reused directly —
+  it already recognizes the `recalibrated` stage, the only one this pipeline accepts.
+- **`ds.samplesheet`**: Cirro's own per-sample metadata table, a DataFrame indexed by
+  `sample` that the user fills in directly in Cirro's UI when registering samples. Already
+  uses `patient`/`sex`/`status` as literal column names in the existing `sarek_call_variants`
+  precedent — the exact three columns `SAMPLESHEET_TO_PAIRS` needs beyond `cram`/`crai`.
+  Nothing new to build here either; this is existing Cirro infrastructure, not a bespoke
+  form.
+
+`preprocess.py`'s job: join the two into `SAMPLESHEET_TO_PAIRS`'s exact CSV shape
+(`patient,sample,sex,status,cram,crai`), write it out, and point `--input` at it via
+`process-input.json`.
+
+**Resolved (validation duplication — confirmed with the dev)**: `preprocess.py` also
+re-implements `SAMPLESHEET_TO_PAIRS`'s own pairing hard-errors (duplicate normal, orphan
+tumor, sex mismatch) so a bad samplesheet fails before Cirro launches compute, not after.
+This is a deliberate two-places-same-rules tradeoff, not an oversight — accepted
+explicitly in exchange for faster, cheaper failure. If the Groovy-side rules in
+`SAMPLESHEET_TO_PAIRS` ever change, `preprocess.py`'s copy needs the same change; there is
+no shared source of truth between the two.
+
+### 13.3 GPU compute-config
+
+Real, current precedent from `parabricks-bqsr`'s own `.cirro/alignment/process-compute.config`
+(`break-through-cancer/parabricks-bqsr`, `fastq-entry` branch — read directly, not
+inferred from the older `sarek_align`/§2 precedent, which turned out to describe a
+different, instance-family-based mechanism this org has since moved away from):
+
+```groovy
+withName: 'PARABRICKS_HAPLOTYPECALLER' {
+    accelerator = 1
+    queue       = env('PW_ONDEMAND_JOB_QUEUE')
+}
+```
+
+GPU sizing is a **queue selection**, not a compute-config instance-family choice — the
+queue name is an environment variable Cirro injects, pointing at an AWS Batch job queue
+tied to a GPU-capable Compute Environment the admin provisions separately, outside this
+repo. `accelerator = 1` matches a single-GPU request, taken from the alignment-entry
+config above (the directly analogous case — a single already-aligned sample through one
+GPU-requiring Parabricks step). Worth noting rather than smoothing over: the sibling
+repo's *other* config, for its fastq-entry process, sets no `accelerator` directive at all
+for its own GPU-requiring processes (`PARABRICKS_FQ2BAM`/`_PART`/`MARKDUP`/`APPLYBQSR`) —
+only `queue`. Read directly, not assumed; the two real configs genuinely disagree on
+whether `accelerator` needs setting at all, and this spec does not resolve why. Start from
+`accelerator = 1` here since it matches the more directly analogous precedent, verify it
+actually schedules correctly once real Cirro access exists to test against, and treat the
+value (and whether it's needed at all) as revisable — the dev already expects to tweak
+this. No instance-family or vCPU-ceiling details belong in this repository's
+`nextflow.config`/`process-compute.config` at all —
+that is 100% the admin's queue-provisioning responsibility.
+
+### 13.4 Form scope
+
+Thin, per §2/§3's already-resolved "keep it minimal" directive: no GATK/VQSR internals
+exposed (those are pinned in code via `nextflow.config` `ext.args`, already true since
+Phase 2). The form only needs the input-dataset selector (driving §13.2's file discovery)
+and `--outdir`-equivalent Cirro plumbing — no new user-facing parameters beyond what
+`usesSampleSheet: true` and Cirro's own dataset-selection UI already provide for free.
+
+### 13.5 Repo layout additions
+
+```
+.cirro/
+  process-definition.json   -- id, parent process declaration, usesSampleSheet: true
+  process-form.json         -- thin form, §13.4
+  process-compute.config    -- GPU queue wiring, §13.3
+  process-input.json        -- --input mapped to preprocess.py's assembled CSV
+  process-output.json
+  preprocess.py             -- samplesheet assembly + validation, §13.2
+  test_preprocess.py
+```
+
+### Decision log
+
+- **Parent process**: `parabricks_bqsr`'s alignment-entry process only (not `sarek_align`
+  directly, not `parabricks_bqsr`'s fastq-entry process) — every real input has gone
+  through BQSR+optional quantization first, so no other parent is a supported path.
+- **Validation duplication**: accepted deliberately — `preprocess.py` re-implements
+  `SAMPLESHEET_TO_PAIRS`'s pairing checks for faster failure, at the cost of two
+  same-rules places to maintain.
+- **GPU wiring**: queue-based (`env('PW_ONDEMAND_JOB_QUEUE')` + `accelerator = 1`),
+  matching `parabricks_bqsr`'s own real, current pattern — not the older
+  instance-family-based approach §2 originally cited, which this org has since moved
+  past. Accelerator count may be revisited later; not treated as final here.
