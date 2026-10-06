@@ -772,9 +772,19 @@ and `--outdir`-equivalent Cirro plumbing — no new user-facing parameters beyon
 
 ### 13.5 Repo layout additions
 
+**Correction during plan-writing**: this section originally listed a committed
+`process-definition.json`, modeled on the public nf-core forks (`sarek_align`/
+`sarek_call_variants`), which do commit one. Checking `parabricks_bqsr`'s actual repo
+tree directly (`break-through-cancer/parabricks-bqsr`, both the `fastq`/`alignment`
+`.cirro/` subdirectories, full tree listing, not just the two directories first
+inspected) shows zero `process-definition.json` anywhere — this org's real, current
+convention for its own custom (non-nf-core-fork) pipelines is to register the process
+directly in Cirro's admin UI (id, parent-process declaration, executor version, code
+repository pointer), not as a version-controlled file. Only the files below are
+committed, matching that real precedent exactly:
+
 ```
 .cirro/
-  process-definition.json   -- id, parent process declaration, usesSampleSheet: true
   process-form.json         -- thin form, §13.4
   process-compute.config    -- GPU queue wiring, §13.3
   process-input.json        -- --input mapped to preprocess.py's assembled CSV
@@ -782,6 +792,11 @@ and `--outdir`-equivalent Cirro plumbing — no new user-facing parameters beyon
   preprocess.py             -- samplesheet assembly + validation, §13.2
   test_preprocess.py
 ```
+
+The parent-process linkage itself (adding ICONICC-NF's registered process id to
+`parabricks_bqsr`'s own `childProcessIds`) is consequently a manual, UI-side step in the
+*other* repo's Cirro registration, not a file either repo commits — flagged explicitly
+as a follow-up, not silently assumed to happen automatically.
 
 ### Decision log
 
