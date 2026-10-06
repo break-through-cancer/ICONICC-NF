@@ -1,0 +1,4 @@
+{
+  "input": "$.dataset.s3|/config/manifest.csv",
+  "outdir": "$.dataset.dataPath"
+}
