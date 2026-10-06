@@ -81,6 +81,28 @@ hundreds of GB per run and are not consumed downstream.
 nf-test test
 ```
 
+## Cirro deployment
+
+This pipeline is deployed as a Cirro process launched from a completed
+`parabricks_bqsr` dataset (that pipeline's alignment-entry process specifically --
+`break-through-cancer/parabricks-bqsr`, not its separate fastq-entry process). See
+`SPEC.md` §13 for the full design.
+
+`.cirro/preprocess.py` auto-discovers each selected sample's recalibrated CRAM/CRAI
+pair and joins it against Cirro's own per-sample metadata table -- set `patient`,
+`sex` (`male`/`female`), and `status` (`Normal`/`Tumor`, case-insensitive) for every
+sample directly in Cirro's own sample-metadata UI before launching. A normal sample
+referenced by multiple tumor samples for the same patient is supported and deduplicated
+automatically, same as this pipeline's own samplesheet convention (§11.1).
+
+**Manual follow-up, not automated by any file in this repo**: once this process is
+registered in Cirro (process id assigned via Cirro's admin UI -- this org's convention
+for its own custom pipelines does not commit a `process-definition.json`, unlike the
+public nf-core forks), add that process id to `parabricks_bqsr`'s own `childProcessIds`
+list so a user can launch this pipeline directly from a completed `parabricks_bqsr`
+dataset in Cirro's UI. This is a one-line edit in the *other* repo's own Cirro
+registration, not something either repo's committed files accomplish on their own.
+
 ## Known gaps in this phase
 
 Three prerequisites are deliberately unresolved. All three are accepted for this phase,
