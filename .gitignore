@@ -22,6 +22,10 @@ tests/fixtures/cnv_core/*
 # locks. Never part of this repo's own history, regardless of what ends up inside it.
 .claude/
 
+# Python (.cirro/preprocess.py)
+__pycache__/
+*.pyc
+
 # R
 .Rproj.user/
 *.Rhistory
