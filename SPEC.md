@@ -705,19 +705,27 @@ there is no supported path that skips `parabricks_bqsr`.
 Real precedent: `nf-core/sarek_call_variants`'s own `preprocess.py`
 (`CirroBio/Cirro-pipelines`, `nf-core/sarek_call_variants/3/`) already solves this exact
 problem for sarek's own `patient,sex,status,sample` samplesheet shape — read directly
-rather than designed blind. Two Cirro-native building blocks it relies on, both reused
-here unchanged:
+rather than designed blind. Two Cirro-native building blocks it draws on:
 
-- **`ds.files` + `fileMappingRules`**: auto-discovers indexed BAM/CRAM pairs per sample
-  from the selected input dataset's files, via path/suffix pattern matching
-  (`preprocessing/<stage>/<sample>/...` or a `.recal.`/`.md.` suffix). Reused directly —
-  it already recognizes the `recalibrated` stage, the only one this pipeline accepts.
-- **`ds.samplesheet`**: Cirro's own per-sample metadata table, a DataFrame indexed by
-  `sample` that the user fills in directly in Cirro's UI when registering samples. Already
-  uses `patient`/`sex`/`status` as literal column names in the existing `sarek_call_variants`
+- **`ds.files`**: the selected input dataset's own file listing, passed into
+  `preprocess.py` as `ds.files["file"]`. Unlike the `sarek_call_variants` precedent, this
+  pipeline does **not** rely on a committed `fileMappingRules` entry to do the indexed
+  BAM/CRAM pairing — `fileMappingRules` lives in `process-definition.json`, which §13.5
+  already establishes this repo deliberately does not commit. Instead, `preprocess.py`
+  does its own file discovery: `alignment_pairs()` matches each path against a regex
+  (`RECAL_FILE`, matching `preprocessing/recalibrated/<sample>/<file>.(bam|cram)$`) and
+  keeps only samples that also have a same-named `.bai`/`.crai` alongside, dropping any
+  sample missing its index.
+- **`ds.samplesheet`**: Cirro's own per-sample metadata table, which the user fills in
+  directly in Cirro's UI when registering samples, passed into `preprocess.py` as a plain
+  DataFrame. `preprocess.py` calls `.set_index("sample")` on it itself, which only makes
+  sense if `sample` arrives as an ordinary **column**, not an already-set index — so that
+  is the shape this code assumes, not an index Cirro hands over pre-set. Already uses
+  `patient`/`sex`/`status` as literal column names in the existing `sarek_call_variants`
   precedent — the exact three columns `SAMPLESHEET_TO_PAIRS` needs beyond `cram`/`crai`.
-  Nothing new to build here either; this is existing Cirro infrastructure, not a bespoke
-  form.
+  **Unverified**: there is no way to confirm `ds.samplesheet`'s exact column/index shape
+  without real Cirro access, which isn't available in this environment; confirm this
+  assumption at the first real Cirro launch.
 
 `preprocess.py`'s job: join the two into `SAMPLESHEET_TO_PAIRS`'s exact CSV shape
 (`patient,sample,sex,status,cram,crai`), write it out, and point `--input` at it via

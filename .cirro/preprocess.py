@@ -70,10 +70,12 @@ def build_samplesheet(files, samplesheet: pd.DataFrame) -> pd.DataFrame:
         status=pairs["sample"].map(meta["status"]),
     )
 
-    # Normalize status the same way sarek_call_variants does -- "Normal"/"normal" -> 0,
-    # "Tumor"/"tumor" -> 1 -- then validate every row resolved to a real 0/1.
-    manifest = manifest.replace(to_replace=dict(
-        status=dict(normal=0, Normal=0, tumor=1, Tumor=1)
+    # Normalize status the same way sex is normalized below -- cast to string, strip,
+    # lowercase -- before mapping, so "Normal"/"normal"/"NORMAL"/"0"/0 all converge to 0
+    # (and the tumor equivalents to 1) before validating every row resolved to a real 0/1.
+    status_normalized = manifest["status"].astype(str).str.strip().str.lower()
+    manifest = manifest.assign(status=status_normalized.replace(
+        {"normal": 0, "0": 0, "tumor": 1, "1": 1}
     ))
     bad_status = manifest.loc[~manifest["status"].isin([0, 1]), "sample"].tolist()
     if bad_status:

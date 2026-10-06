@@ -81,6 +81,13 @@ hundreds of GB per run and are not consumed downstream.
 nf-test test
 ```
 
+`.cirro/preprocess.py`'s own offline unit tests run separately, without `nf-test` or the
+Cirro SDK:
+
+```bash
+python3 .cirro/test_preprocess.py -v
+```
+
 ## Cirro deployment
 
 This pipeline is deployed as a Cirro process launched from a completed
@@ -95,13 +102,16 @@ sample directly in Cirro's own sample-metadata UI before launching. A normal sam
 referenced by multiple tumor samples for the same patient is supported and deduplicated
 automatically, same as this pipeline's own samplesheet convention (§11.1).
 
-**Manual follow-up, not automated by any file in this repo**: once this process is
-registered in Cirro (process id assigned via Cirro's admin UI -- this org's convention
-for its own custom pipelines does not commit a `process-definition.json`, unlike the
-public nf-core forks), add that process id to `parabricks_bqsr`'s own `childProcessIds`
-list so a user can launch this pipeline directly from a completed `parabricks_bqsr`
-dataset in Cirro's UI. This is a one-line edit in the *other* repo's own Cirro
-registration, not something either repo's committed files accomplish on their own.
+**Manual follow-up, not automated by any file in this repo**: this org's convention for
+its own custom pipelines does not commit a `process-definition.json` (unlike the public
+nf-core forks), so registering this process happens entirely in Cirro's admin UI. That
+registration needs: a process id; `usesSampleSheet: true`; the executor/engine version;
+a pointer to this code repository; and the `.cirro/process-compute.config` compute
+profile attached. Separately, once a process id is assigned, add that id to
+`parabricks_bqsr`'s own `childProcessIds` list so a user can launch this pipeline
+directly from a completed `parabricks_bqsr` dataset in Cirro's UI -- a one-line edit in
+the *other* repo's own Cirro registration, not something either repo's committed files
+accomplish on their own.
 
 ## Known gaps in this phase
 

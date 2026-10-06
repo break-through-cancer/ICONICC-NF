@@ -2,7 +2,10 @@
 
 Runs without the Cirro SDK or boto3: both are stubbed before preprocess is loaded,
 matching the pattern established in CirroBio/Cirro-pipelines'
-nf-core/sarek_call_variants/3/test_preprocess.py. Plain `python3 -m unittest`.
+nf-core/sarek_call_variants/3/test_preprocess.py. Run with
+`python3 .cirro/test_preprocess.py -v` -- `.cirro/` is not a Python package, so
+`python3 -m unittest` (bare, or as `python3 -m unittest .cirro.test_preprocess`) does not
+discover or run these tests.
 """
 import sys
 import types
@@ -77,9 +80,58 @@ class BuildSamplesheetTests(unittest.TestCase):
         self.assertEqual(len(result), 3)
 
     def test_missing_index_drops_sample(self):
-        paths = ["preprocessing/recalibrated/PT01_normal/PT01_normal.recal.cram"]
-        sheet = samplesheet_df([("PT01_normal", "PT01", "female", "Normal")])
-        with self.assertRaises(ValueError):
+        # PT01's sample has no .crai alongside it, so it must be dropped by
+        # alignment_pairs() -- but PT02's pair is fully indexed and valid, so the
+        # function should still succeed and return only PT02's pair, rather than
+        # raising for the unrelated "zero pairs at all" reason.
+        paths = (
+            ["preprocessing/recalibrated/PT01_normal/PT01_normal.recal.cram"]
+            + recal_paths("PT02_normal")
+            + recal_paths("PT02_tumor")
+        )
+        sheet = samplesheet_df([
+            ("PT01_normal", "PT01", "female", "Normal"),
+            ("PT02_normal", "PT02", "female", "Normal"),
+            ("PT02_tumor", "PT02", "female", "Tumor"),
+        ])
+        result = preprocess.build_samplesheet(paths, sheet)
+        self.assertEqual(sorted(result["sample"]), ["PT02_normal", "PT02_tumor"])
+        self.assertNotIn("PT01_normal", result["sample"].tolist())
+
+    def test_status_accepts_string_zero_one_and_uppercase(self):
+        paths = recal_paths("PT01_normal") + recal_paths("PT01_tumor")
+        sheet = samplesheet_df([
+            ("PT01_normal", "PT01", "female", "0"),
+            ("PT01_tumor", "PT01", "female", "1"),
+        ])
+        result = preprocess.build_samplesheet(paths, sheet)
+        self.assertEqual(
+            result.loc[result["sample"] == "PT01_normal", "status"].iloc[0], 0
+        )
+        self.assertEqual(
+            result.loc[result["sample"] == "PT01_tumor", "status"].iloc[0], 1
+        )
+
+        paths2 = recal_paths("PT02_normal") + recal_paths("PT02_tumor")
+        sheet2 = samplesheet_df([
+            ("PT02_normal", "PT02", "female", "NORMAL"),
+            ("PT02_tumor", "PT02", "female", "TUMOR"),
+        ])
+        result2 = preprocess.build_samplesheet(paths2, sheet2)
+        self.assertEqual(
+            result2.loc[result2["sample"] == "PT02_normal", "status"].iloc[0], 0
+        )
+        self.assertEqual(
+            result2.loc[result2["sample"] == "PT02_tumor", "status"].iloc[0], 1
+        )
+
+    def test_bad_status_is_still_hard_error(self):
+        paths = recal_paths("PT01_normal") + recal_paths("PT01_tumor")
+        sheet = samplesheet_df([
+            ("PT01_normal", "PT01", "female", "unknown"),
+            ("PT01_tumor", "PT01", "female", "Tumor"),
+        ])
+        with self.assertRaisesRegex(ValueError, "status must be Normal/0 or Tumor/1"):
             preprocess.build_samplesheet(paths, sheet)
 
     def test_no_recalibrated_files_raises(self):
