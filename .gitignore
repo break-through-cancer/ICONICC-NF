@@ -18,6 +18,10 @@ tests/fixtures/cnv_core/*
 # used by the top-level tests/main.nf.test to override the real S3 reference defaults
 !tests/fixtures/main_pipeline/
 
+# Claude Code harness metadata -- worktrees, SDD ledgers/briefs/reports, scheduled-task
+# locks. Never part of this repo's own history, regardless of what ends up inside it.
+.claude/
+
 # R
 .Rproj.user/
 *.Rhistory
