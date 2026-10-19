@@ -723,9 +723,14 @@ rather than designed blind. Two Cirro-native building blocks it draws on:
   is the shape this code assumes, not an index Cirro hands over pre-set. Already uses
   `patient`/`sex`/`status` as literal column names in the existing `sarek_call_variants`
   precedent — the exact three columns `SAMPLESHEET_TO_PAIRS` needs beyond `cram`/`crai`.
-  **Unverified**: there is no way to confirm `ds.samplesheet`'s exact column/index shape
-  without real Cirro access, which isn't available in this environment; confirm this
-  assumption at the first real Cirro launch.
+  **Verified against a real failed Cirro launch**: `sample` does arrive as an ordinary
+  column as assumed, but the other column names are not reliable. The project's own
+  declared common-metadata schema does define `patient` — but a sample whose metadata was
+  carried over from a fastq-ingestion samplesheet instead exposes `patient_id`, and the
+  first real launch failed on exactly that (`KeyError: 'patient'`). Separately, `sex` has
+  been observed recorded as karyotype (`XX`/`XY`), not literal `male`/`female`.
+  `preprocess.py` now accepts both column names (preferring `patient` when both are
+  present) and maps `XX`/`XY` to `female`/`male` before validating.
 
 `preprocess.py`'s job: join the two into `SAMPLESHEET_TO_PAIRS`'s exact CSV shape
 (`patient,sample,sex,status,cram,crai`), write it out, and point `--input` at it via

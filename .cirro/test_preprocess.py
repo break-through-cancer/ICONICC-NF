@@ -181,6 +181,44 @@ class BuildSamplesheetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "No Cirro sample metadata"):
             preprocess.build_samplesheet(paths, sheet)
 
+    def test_patient_id_column_is_accepted(self):
+        # Real Cirro sample metadata carried over from a fastq ingestion samplesheet
+        # uses "patient_id", not the project schema's "patient".
+        paths = recal_paths("PT01_normal") + recal_paths("PT01_tumor")
+        sheet = pd.DataFrame([
+            dict(sample="PT01_normal", patient_id="PT01", sex="female", status="Normal"),
+            dict(sample="PT01_tumor", patient_id="PT01", sex="female", status="Tumor"),
+        ])
+        result = preprocess.build_samplesheet(paths, sheet)
+        self.assertEqual(sorted(result["patient"].unique()), ["PT01"])
+
+    def test_patient_column_preferred_over_patient_id(self):
+        paths = recal_paths("PT01_normal") + recal_paths("PT01_tumor")
+        sheet = pd.DataFrame([
+            dict(sample="PT01_normal", patient="PT01", patient_id="wrong", sex="female", status="Normal"),
+            dict(sample="PT01_tumor", patient="PT01", patient_id="wrong", sex="female", status="Tumor"),
+        ])
+        result = preprocess.build_samplesheet(paths, sheet)
+        self.assertEqual(sorted(result["patient"].unique()), ["PT01"])
+
+    def test_sex_accepts_xx_xy_karyotype(self):
+        paths = recal_paths("PT01_normal") + recal_paths("PT01_tumor")
+        sheet = samplesheet_df([
+            ("PT01_normal", "PT01", "XY", "Normal"),
+            ("PT01_tumor", "PT01", "xy", "Tumor"),
+        ])
+        result = preprocess.build_samplesheet(paths, sheet)
+        self.assertEqual(sorted(result["sex"].unique()), ["male"])
+
+    def test_bad_sex_is_still_hard_error(self):
+        paths = recal_paths("PT01_normal") + recal_paths("PT01_tumor")
+        sheet = samplesheet_df([
+            ("PT01_normal", "PT01", "unknown", "Normal"),
+            ("PT01_tumor", "PT01", "female", "Tumor"),
+        ])
+        with self.assertRaisesRegex(ValueError, "sex must be 'male'/'female' or 'XX'/'XY'"):
+            preprocess.build_samplesheet(paths, sheet)
+
 
 if __name__ == "__main__":
     unittest.main()
