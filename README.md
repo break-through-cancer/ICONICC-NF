@@ -60,7 +60,7 @@ Reference defaults that may be worth overriding:
 | Parameter | Default |
 | --- | --- |
 | `--outdir` | `./results` |
-| `--cnv_r_container` | `iconicc-cnv-r:latest` (see the gap below) |
+| `--cnv_r_container` | `ghcr.io/break-through-cancer/iconicc-cnv-r:latest` |
 | `--ref_fasta` / `--ref_fasta_fai` / `--ref_fasta_dict` | hg38 from `s3://broad-references` |
 | `--ref_dir_1000g` | `s3://btc-refdata/iconicc/reference-genome-1000G.tar` |
 | `--genetic_map` | `s3://btc-refdata/iconicc/reference-genome-genetic_map_hg38_withX.txt.gz` |
@@ -115,9 +115,12 @@ accomplish on their own.
 
 ## Known gaps in this phase
 
-Three prerequisites are deliberately unresolved. All three are accepted for this phase,
-and together they mean most module-level tests and the subworkflow-level test cannot
-fully pass yet. The pipeline code itself is complete and reviewed.
+Two prerequisites are deliberately unresolved. Both are accepted for this phase, and
+together they mean most module-level tests and the subworkflow-level test cannot fully
+pass yet. The pipeline code itself is complete and reviewed. (The R container gap from
+earlier in this phase is resolved: `params.cnv_r_container` now defaults to the
+published `ghcr.io/break-through-cancer/iconicc-cnv-r:latest`. See
+`containers/iconicc-cnv-r/README.md` for rebuild/republish commands.)
 
 **1. Real fixture data is not staged.** `tests/fixtures/cnv_core/` holds only a README;
 no patient genomic data has been copied into it, and the directory is gitignored so that
@@ -127,13 +130,7 @@ fasta), plus `tests/subworkflows/cnv_core.nf.test`. See
 **`tests/fixtures/cnv_core/README.md`** for the full list of expected files and how to
 stage them.
 
-**2. The R container is not built.** `AC_CALC`, `TANGENT_XY`, and `SEGMENT` all run in
-`params.cnv_r_container`, which defaults to the local tag `iconicc-cnv-r:latest`. The
-Dockerfile exists but the image has never been built or published, so those three
-processes cannot run anywhere yet, locally or remotely. See
-**`containers/iconicc-cnv-r/README.md`** for the build and publish commands.
-
-**3. No real Parabricks/NGC execution has been validated.** This dev environment (and
+**2. No real Parabricks/NGC execution has been validated.** This dev environment (and
 the dev's own machine, confirmed) has no NVIDIA GPU, so `SAMPLE_GERMLINE_CALLING`'s
 wiring is tested via nf-test's `-stub` flag rather than a real `pbrun` run. Real
 Parabricks validation can only happen on Cirro/AWS against an actual GPU instance —
