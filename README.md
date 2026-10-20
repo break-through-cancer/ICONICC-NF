@@ -69,6 +69,17 @@ Reference defaults that may be worth overriding:
 | `--calling_intervals` | `s3://gatk-test-data/intervals/hg38.even.handcurated.20k.intervals` |
 | `--dbsnp_vcf` / `--dbsnp_vcf_index` | `s3://broad-references/hg38/v0/...` |
 | `--hapmap_resource_vcf` / `--omni_resource_vcf` / `--one_thousand_genomes_resource_vcf` / `--mills_resource_vcf` / `--axiomPoly_resource_vcf` (each with a matching `_index`) | `s3://broad-references/hg38/v0/...` |
+| `--haplotypecaller_memory_gb` | `72` (then scaled by `task.attempt` on each OOM retry; see below) |
+
+`PARABRICKS_HAPLOTYPECALLER` and the GATK joint-genotyping chain
+(`GATK4_GENOMICSDBIMPORT`, `GATK4_GENOTYPEGVCFS`, `VARIANTRECALIBRATOR_SNP`/`_INDEL`,
+`APPLYVQSR_SNP`/`_INDEL`) all scale their memory as `base * task.attempt` rather than a
+flat value, and `.cirro/process-compute.config` retries `PARABRICKS_HAPLOTYPECALLER` on
+exactly the exit codes a container memory-kill produces (including AWS Batch's
+no-exit-code case, reported to Nextflow as `2147483647`) — a real OOM on real (non-toy)
+coverage data retries automatically with more memory rather than failing identically
+every attempt. Override `--haplotypecaller_memory_gb` if even the scaled default isn't
+enough for a given sample's coverage.
 
 Only the five final outputs named in `SPEC.md` §6 are published to `--outdir`:
 `read_depth`, `seg_file`, `ac_cts`, `segment_plots`, `segment_cts`. Publishing is
