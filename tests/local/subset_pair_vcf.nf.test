@@ -8,7 +8,7 @@ nextflow_process {
             process {
                 """
                 input[0] = [
-                    [participant_id: 'TEST_PT', patient: 'TEST_PATIENT', normal_sample_id: 'TEST_NORMAL', tumor_sample_id: 'TEST_TUMOR'],
+                    [participant_id: 'TEST_PT', normal_sample_id: 'TEST_NORMAL', tumor_sample_id: 'TEST_TUMOR'],
                     file("\${projectDir}/tests/fixtures/cnv_core/joint.vcf.gz"),
                     file("\${projectDir}/tests/fixtures/cnv_core/joint.vcf.gz.tbi")
                 ]

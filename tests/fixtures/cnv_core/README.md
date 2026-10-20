@@ -35,17 +35,13 @@ plus chrX — matching the per-chromosome loop in the corresponding module.
 | `tumor.recal.cram.crai` | CRAM index for `tumor.recal.cram`. |
 | `sample_info.env` | Shell-sourceable file recording the real `PARTICIPANT_ID`, `NORMAL_SAMPLE_ID`, `TUMOR_SAMPLE_ID`, and `SAMPLE_SEX` for the staged run, so later tests use real IDs instead of placeholders. Its four values must also be copied into `params.fixture_participant_id` / `fixture_normal_id` / `fixture_tumor_id` / `fixture_sample_sex` in `nextflow.config`, or passed on the nf-test command line — `tests/subworkflows/cnv_core.nf.test` asserts they are non-null before it runs. |
 
-**`joint.vcf.gz`'s embedded sample columns**: `parabricks_bqsr` (this pipeline's sole
-alignment-entry source) writes each CRAM's read group as `SM:${patient}_${sample}`, not
-the bare sample id — confirmed against a real run's `#CHROM` line, after a joint VCF
-staged this way failed `SUBSET_PAIR_VCF`'s `bcftools view -s` with "sample that does not
-exist in header". `modules/local/subset_pair_vcf.nf` subsets by `${patient}_${sample}`
-accordingly, so `joint.vcf.gz`'s own `#CHROM` columns must read
-`<patient>_<normal_sample_id>` / `<patient>_<tumor_sample_id>`, not the bare
-`NORMAL_SAMPLE_ID` / `TUMOR_SAMPLE_ID` values recorded in `sample_info.env` — those stay
-bare, since they also feed samplesheet-level joins elsewhere. If this fixture is staged
-from an old ICONICC WDL run rather than a real parabricks_bqsr-backed Nextflow run, check
-its alignment step's own read-group convention before assuming it matches.
+**`joint.vcf.gz`'s embedded sample columns**: real `parabricks_bqsr`-backed runs have been
+observed with `#CHROM` columns that are *not* the bare `NORMAL_SAMPLE_ID`/`TUMOR_SAMPLE_ID`
+from `sample_info.env` — e.g. `<patient>_<sample>`, or even `<sample>_<sample>` when the
+alignment samplesheet's own `patient` field was left blank. `SUBSET_PAIR_VCF` resolves the
+real column names from the VCF itself (exact match, or a `_<id>` suffix) rather than
+assuming a fixed prefix, so this fixture works whichever convention the staged run used —
+no special renaming needed when copying it in.
 
 `tests/subworkflows/cnv_core.nf.test` now consumes a pre-computed tumor read-counts
 file directly (`TEST_TUMOR_counts.txt`, in the allelic-count stage below) rather than

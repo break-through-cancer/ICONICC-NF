@@ -123,14 +123,16 @@ fragile.
 pair (see §5, sarek's joint-calling is cohort-wide, not pairwise) and pins the column
 order `hetvarFilter` needs, in one step. Do this before any other CNV-half processing.
 
-**Verified against a real Cirro run**: the joint VCF's actual `#CHROM` sample columns are
-not the bare `normal_sample_id`/`tumor_sample_id` — `parabricks_bqsr` (this pipeline's
-sole alignment-entry source) embeds each CRAM's read group as `SM:${patient}_${sample}`,
-which GenomicsDBImport/GenotypeGVCFs carry straight through. `SUBSET_PAIR_VCF` subsets by
-`${patient}_${normal_sample_id}`/`${patient}_${tumor_sample_id}` to match. This is a fixed
-property of `parabricks_bqsr`'s own read-group convention, not something either pipeline
-is expected to change — if that convention ever changes, `SUBSET_PAIR_VCF` must change
-with it.
+**Verified against two real Cirro runs**: the joint VCF's actual `#CHROM` sample columns
+are not the bare `normal_sample_id`/`tumor_sample_id`. `parabricks_bqsr` embeds each
+CRAM's read group as `SM:${patient}_${sample}`, which GenomicsDBImport/GenotypeGVCFs carry
+straight through — but the `patient` value used at alignment time is a separate, earlier
+input than whatever Cirro's own project metadata later records as that sample's patient,
+and the two are not guaranteed to agree (one real run embedded `<patient>_<sample>`;
+another, where the alignment samplesheet's `patient` column was left blank, embedded
+`<sample>_<sample>`). Rather than reconstruct the embedded name from samplesheet metadata,
+`SUBSET_PAIR_VCF` resolves it from the VCF itself — exact match, or a `_<id>` suffix —
+and hard-errors on anything but exactly one match per side.
 
 ## 5. Joint genotyping — reuse sarek's subworkflow directly, not the top-level pipeline
 
