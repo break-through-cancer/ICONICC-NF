@@ -1,7 +1,15 @@
 {
   "form": {
     "type": "object",
-    "properties": {}
+    "properties": {
+      "haplotypecaller_memory_gb": {
+        "title": "HaplotypeCaller memory override (GB)",
+        "type": "integer",
+        "minimum": 16,
+        "maximum": 768,
+        "description": "Leave empty for the default (72 GB, doubling automatically on each OOM retry). For deep/high-coverage samples, set a higher starting value to avoid the first attempt failing."
+      }
+    }
   },
   "ui": {}
 }

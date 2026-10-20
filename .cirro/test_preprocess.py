@@ -220,5 +220,20 @@ class BuildSamplesheetTests(unittest.TestCase):
             preprocess.build_samplesheet(paths, sheet)
 
 
+class ProcessFormTests(unittest.TestCase):
+    """The Cirro launch form/input mapping, not preprocess.py -- same file as
+    break-through-cancer/parabricks-fq2bam-bqsr's own .cirro/align/test_align_preprocess.py,
+    which mixes the two for the same reason (one process, one Cirro folder)."""
+
+    def test_haplotypecaller_memory_override_is_offered_and_mapped(self):
+        import json
+        here = Path(__file__).parent
+        field = json.loads((here / "process-form.json").read_text())["form"]["properties"]["haplotypecaller_memory_gb"]
+        self.assertEqual(field["type"], "integer")
+        self.assertNotIn("default", field)
+        mapping = json.loads((here / "process-input.json").read_text())
+        self.assertEqual(mapping["haplotypecaller_memory_gb"], "$.dataset.params.haplotypecaller_memory_gb")
+
+
 if __name__ == "__main__":
     unittest.main()

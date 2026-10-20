@@ -1,4 +1,5 @@
 {
   "input": "$.dataset.s3|/config/manifest.csv",
-  "outdir": "$.dataset.dataPath"
+  "outdir": "$.dataset.dataPath",
+  "haplotypecaller_memory_gb": "$.dataset.params.haplotypecaller_memory_gb"
 }
