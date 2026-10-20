@@ -17,6 +17,12 @@ tests/fixtures/cnv_core/*
 # main_pipeline fixtures ARE committed (tiny placeholders, not real genomic data) --
 # used by the top-level tests/main.nf.test to override the real S3 reference defaults
 !tests/fixtures/main_pipeline/
+# split_intervals fixtures ARE committed (synthetic interval rows against the real hg38
+# dictionary's own @SQ lines, no genomic data)
+!tests/fixtures/split_intervals/
+# gather_read_counts fixtures ARE committed (hand-built, format-accurate TSV rows, no
+# genomic data)
+!tests/fixtures/gather_read_counts/
 
 # Claude Code harness metadata -- worktrees, SDD ledgers/briefs/reports, scheduled-task
 # locks. Never part of this repo's own history, regardless of what ends up inside it.

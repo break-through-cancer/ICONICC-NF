@@ -1,0 +1,65 @@
+nextflow_process {
+    name "Test split_intervals"
+    script "modules/local/split_intervals.nf"
+    process "SPLIT_INTERVALS"
+
+    test("groups mode produces scatter_count roughly-balanced shards") {
+        when {
+            process {
+                """
+                input[0] = [ file(params.ref_fasta), file(params.ref_fasta_fai), file(params.ref_fasta_dict) ]
+                input[1] = file("\${projectDir}/tests/fixtures/split_intervals/wgs.preprocessed.interval_list")
+                input[2] = 'groups'
+                input[3] = 4
+                input[4] = []
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert process.out[0].get(0).size() == 4
+        }
+    }
+
+    test("per_chromosome mode produces one shard per requested chromosome, each containing only that contig") {
+        when {
+            process {
+                """
+                input[0] = [ file(params.ref_fasta), file(params.ref_fasta_fai), file(params.ref_fasta_dict) ]
+                input[1] = file("\${projectDir}/tests/fixtures/split_intervals/wgs.preprocessed.interval_list")
+                input[2] = 'per_chromosome'
+                input[3] = 0
+                input[4] = ['21', '22']
+                """
+            }
+        }
+        then {
+            assert process.success
+            def shards = process.out[0].get(0)
+            assert shards.size() == 2
+            def chr21 = path(shards.find { it.toString().endsWith('chr21.interval_list') })
+            def chr22 = path(shards.find { it.toString().endsWith('chr22.interval_list') })
+            assert chr21.exists() && chr22.exists()
+            assert chr21.text.readLines().findAll { !it.startsWith('@') }.every { it.startsWith('chr21\t') }
+            assert chr22.text.readLines().findAll { !it.startsWith('@') }.every { it.startsWith('chr22\t') }
+        }
+    }
+
+    test("an unknown scatter_mode is a hard error") {
+        when {
+            process {
+                """
+                input[0] = [ file(params.ref_fasta), file(params.ref_fasta_fai), file(params.ref_fasta_dict) ]
+                input[1] = file("\${projectDir}/tests/fixtures/split_intervals/wgs.preprocessed.interval_list")
+                input[2] = 'bogus'
+                input[3] = 0
+                input[4] = []
+                """
+            }
+        }
+        then {
+            assert workflow.failed
+            assert (workflow.stdout + workflow.stderr).join('\n').contains("scatter_mode must be 'groups' or 'per_chromosome'")
+        }
+    }
+}

@@ -834,3 +834,102 @@ as a follow-up, not silently assumed to happen automatically.
   matching `parabricks_bqsr`'s own real, current pattern — not the older
   instance-family-based approach §2 originally cited, which this org has since moved
   past. Accelerator count may be revisited later; not treated as final here.
+
+## 14. Scatter-gather for read-counting and the CNV per-chromosome chain (real-world finding, post-Phase-3)
+
+A real (non-toy) tumor/normal pair on DFCI4 pushed `COLLECT_READ_COUNTS`'s single
+whole-genome GATK call into an estimated tens-of-hours wall-clock, confirmed against
+Broad's own official GATK CNV WDL pipeline and the original ICONICC WDL
+(`ICON_Tasks.2.wdl`/`ICONICC_paired.3.wdl`) both doing the same one-call-per-sample,
+no-scatter thing this pipeline already did — i.e. this is a genuine new enhancement
+beyond any prior version of this pipeline, not catching up to a known pattern.
+
+### 14.1 What's scattered, what isn't
+
+- **`SAMPLE_READ_COUNTS`** (`COLLECT_READ_COUNTS`): scattered. Implemented this phase.
+- **CNV per-chromosome chain** (`ITER_ISEC` → `HETVAR_FILTER` → `EAGLE_PHASING` →
+  `INDEX_PHASED` → `QUERY_HET_AD`): all five already internally loop per-chromosome
+  sequentially inside one task each (`for i in {1..22} X; do ...; done`-style). No
+  cross-chromosome state in any of them (each `bcftools`/`eagle` invocation only reads
+  that chromosome's own slice against that chromosome's own reference-panel file) —
+  scattering into parallel per-chromosome/per-group tasks and gathering the output list
+  before the next stage is exactly equivalent to today's sequential-loop result, not an
+  approximation. `EAGLE_PHASING` (`cpus 16, memory 128 GB, disk 2000 GB`, run 23x
+  sequentially per pair today) is the highest-value target in this chain. Not yet
+  implemented as of this section being written; tracked as the next piece of this work.
+- **Joint-genotyping chain** (`GenomicsDBImport` onward): explicitly NOT reopened here —
+  §12.6 already documents that decision (`--merge-input-intervals` consumes the whole
+  interval list in one shot; a real scatter there needs a GenomicsDB-workspace merge
+  step, not just file concatenation).
+- **`PARABRICKS_HAPLOTYPECALLER`**: not a scatter candidate — already GPU-accelerated
+  (parallel in hardware), and scattering it would add a GVCF-merge step upstream of the
+  already-settled joint-genotyping decision for comparatively little gain.
+
+### 14.2 Sharding modes — two, mutually exclusive, not a single fixed granularity
+
+- **`groups`** (default): `SPLIT_INTERVALS` runs GATK's own `SplitIntervals
+  --scatter-count N` against the *unrestricted* interval list (alt/decoy/unplaced
+  contigs included, same as today's output — GATK's own size-balanced splitting
+  algorithm already bundles the mass of small contigs sensibly with no special-casing
+  needed). Bounds job count for cohort-scale runs: total jobs scale with
+  `samples × N`, not `samples × every contig in the reference`.
+- **`per_chromosome`**: one shard per `params.scatter_chromosomes` entry (hg38 default:
+  chr1-22 + X — the same chromosome universe the phasing panel, `ref_dir_1000g`, is
+  built around). Restricted to that list deliberately: alt/decoy/unplaced contigs don't
+  have a sensible standalone per-chromosome identity, and nothing downstream
+  (`TANGENT_XY`, `segment.R`) reads bins from non-primary contigs anyway. This is the
+  only one of the two modes where output scope narrows relative to today's behavior,
+  and it only does so when a run explicitly opts into this mode.
+- Why not GATK's `CreateSequenceGroupingTSV` pattern (Broad's own WARP preprocessing
+  convention) directly: it does the same size-balanced-not-type-separated grouping
+  `SplitIntervals --scatter-count N` already gives for free, so there was nothing to
+  gain by reimplementing it by hand.
+- `params.scatter_chromosomes` is the reusable, species-overridable chromosome universe
+  for both this and the (pending) CNV-chain scatter — overriding it is also most of
+  what canine support needs for the hardcoded `{1..22} X` loops documented in
+  `iconicc-nf-canine-expansion.md`.
+
+### 14.3 Failure semantics — sequenced deliberately, not "do it all at once"
+
+Per-shard retry is a free side effect of scattering (`task.attempt`, same
+`memory = { base * task.attempt }` mechanism `PARABRICKS_HAPLOTYPECALLER`'s own OOM
+retries already use). What happens after retries are exhausted is a
+separate, explicitly sequenced decision:
+
+1. **This phase**: a shard that still fails after retries hard-fails the whole run, with
+   diagnostics that name the specific failing chromosome/group (each shard's own log
+   still shows exactly which `bcftools`/`eagle` invocation broke, same as today).
+2. **Deferred, not rejected**: graceful per-chromosome exclusion (retry, then continue
+   with a visibly-marked gap — blank value, explicit FAIL marker, or a rendered gap in
+   the R scripts' PDF plots — rather than failing the whole run) was discussed and is a
+   real, philosophy-compatible idea (visible exclusion, not silent), but requires real
+   new work beyond scattering itself: Nextflow's `errorStrategy='ignore'` doesn't
+   synthesize a placeholder, so the gather step would need to explicitly reconcile
+   "chromosomes received" against "chromosomes expected" and manufacture one, and
+   `bin/ac_calc.R`/`bin/tangent.R`/`bin/segment.R` (vendored in this repo) would need new
+   NA-handling and new plotting logic, not just tolerance. Deferred until there's real
+   evidence of how often genuine per-chromosome failures occur on production-coverage
+   data — on today's 0.1x toy data a dropout was expected and benign (the `EAGLE_PHASING`
+   `M=0`-matching-SNPs case); on real coverage it's a much rarer, more meaningful signal
+   (something is genuinely wrong with that chromosome for that sample) that's worth
+   surfacing loudly rather than engineering around speculatively.
+
+### 14.4 Job-count-at-scale mitigations
+
+Scattering multiplies job count per sample by however many shards are configured,
+and `PW_ONDEMAND_JOB_QUEUE` is shared across every pipeline in this Cirro project, not
+exclusive to this one. Mitigations landed alongside the scatter itself, not bolted on
+after the fact:
+
+- `executor.queueSize`/`executor.submitRateLimit` set explicitly in `nextflow.config`
+  (AWS Batch's own Nextflow executor default is `queueSize=1000` with no submission
+  throttling — exactly the kind of bursty, unbounded submission pattern that caused
+  real prior AWS Batch problems independent of this pipeline).
+- The `groups` mode's tunable `N` is the primary lever for bounding total job count at
+  cohort scale — pick a small `N` for a large multi-patient run, a larger one (or
+  `per_chromosome`) for a single-sample validation run where job count isn't the
+  concern.
+- `EAGLE_PHASING`'s image (`docker.io/cbao/eagle`) is on Docker Hub, not GHCR — a real
+  rate-limit exposure once many shards across many samples pull it concurrently from
+  cold instances. Mirroring it to `ghcr.io/break-through-cancer/...` (same pattern as
+  `iconicc-cnv-r`) is planned alongside the CNV-chain scatter, not yet done.

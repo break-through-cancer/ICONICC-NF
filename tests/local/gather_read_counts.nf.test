@@ -1,0 +1,38 @@
+nextflow_process {
+    name "Test gather_read_counts"
+    script "modules/local/gather_read_counts.nf"
+    process "GATHER_READ_COUNTS"
+
+    test("merges shards in reference-dictionary order, not alphabetical or arrival order") {
+        when {
+            process {
+                """
+                // chr10's shard is listed FIRST here, deliberately, to prove the merge
+                // sorts by the dictionary's own contig order (chr1, chr2, chr10) rather
+                // than trusting input order or falling into the chr10-before-chr2
+                // alphabetical trap.
+                input[0] = [
+                    [sample: 'TEST_SAMPLE'],
+                    [
+                        file("\${projectDir}/tests/fixtures/gather_read_counts/shardB_chr10_counts.txt"),
+                        file("\${projectDir}/tests/fixtures/gather_read_counts/shardA_chr2_counts.txt")
+                    ]
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            def out = path(process.out[0].get(0)[1]).text
+            def lines = out.readLines()
+            assert lines.count { it == 'CONTIG\tSTART\tEND\tCOUNT' } == 1
+            def dataLines = lines.findAll { !it.startsWith('@') && it != 'CONTIG\tSTART\tEND\tCOUNT' }
+            assert dataLines == [
+                'chr2\t1\t1000\t50',
+                'chr2\t1001\t2000\t60',
+                'chr10\t1\t1000\t10',
+                'chr10\t1001\t2000\t20',
+            ]
+        }
+    }
+}

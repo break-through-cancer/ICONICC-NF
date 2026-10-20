@@ -70,6 +70,9 @@ Reference defaults that may be worth overriding:
 | `--dbsnp_vcf` / `--dbsnp_vcf_index` | `s3://broad-references/hg38/v0/...` |
 | `--hapmap_resource_vcf` / `--omni_resource_vcf` / `--one_thousand_genomes_resource_vcf` / `--mills_resource_vcf` / `--axiomPoly_resource_vcf` (each with a matching `_index`) | `s3://broad-references/hg38/v0/...` |
 | `--haplotypecaller_memory_gb` | `72` (then scaled by `task.attempt` on each OOM retry; see below) |
+| `--scatter_chromosomes` | `chr1-22 + X` (hg38; matches `--ref_dir_1000g`'s own per-chromosome files) |
+| `--read_counts_scatter_mode` | `groups` (`groups` or `per_chromosome`; see below) |
+| `--read_counts_scatter_count` | `8` (shards per sample, `groups` mode only) |
 
 `PARABRICKS_HAPLOTYPECALLER` and the GATK joint-genotyping chain
 (`GATK4_GENOMICSDBIMPORT`, `GATK4_GENOTYPEGVCFS`, `VARIANTRECALIBRATOR_SNP`/`_INDEL`,
@@ -80,6 +83,16 @@ no-exit-code case, reported to Nextflow as `2147483647`) — a real OOM on real 
 coverage data retries automatically with more memory rather than failing identically
 every attempt. Override `--haplotypecaller_memory_gb` if even the scaled default isn't
 enough for a given sample's coverage.
+
+`SAMPLE_READ_COUNTS` scatters each sample's `COLLECT_READ_COUNTS` call across multiple
+parallel shards rather than one whole-genome task (real high-coverage CRAMs pushed that
+single call into a tens-of-hours wall-clock — see `SPEC.md` §14). Two mutually exclusive
+modes: `groups` (default) splits into `--read_counts_scatter_count` size-balanced shards
+via GATK's own `SplitIntervals`, bounding total job count for cohort-scale runs; `per_chromosome`
+shards one-per-entry in `--scatter_chromosomes` instead, for maximum parallelism on a
+single-sample run where job count isn't the concern. `--scatter_chromosomes` is also the
+chromosome universe the CNV per-chromosome chain's own (planned) scatter will use —
+override it for other species/reference builds.
 
 Only the five final outputs named in `SPEC.md` §6 are published to `--outdir`:
 `read_depth`, `seg_file`, `ac_cts`, `segment_plots`, `segment_cts`. Publishing is

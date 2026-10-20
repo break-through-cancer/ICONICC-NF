@@ -1,5 +1,5 @@
 process COLLECT_READ_COUNTS {
-    tag "${sample_id}"
+    tag "${sample_id}:${intervals.baseName}"
     container 'broadinstitute/gatk@sha256:21c3cb43b7d11891ed4b63cc7274f20187f00387cfaa0433b3e7991b5be34dbe'
     cpus 2
     memory '10 GB'
@@ -8,7 +8,12 @@ process COLLECT_READ_COUNTS {
     tuple val(meta), val(sample_id), path(cram), path(crai), path(intervals), path(ref_fasta), path(ref_fasta_fai), path(ref_fasta_dict)
 
     output:
-    tuple val(meta), path("${sample_id}_counts.txt")
+    // Filename includes the shard's own interval_list basename (e.g. chr21, or GATK
+    // SplitIntervals' 0000/0001/...) so GATHER_READ_COUNTS can stage every sample's N
+    // shards in one task without a filename collision -- every shard otherwise shares
+    // the same sample_id and would otherwise all be named identically. meta.sample
+    // already equals sample_id, so grouping downstream keys on meta, not a duplicate field.
+    tuple val(meta), path("${sample_id}_${intervals.baseName}_counts.txt")
 
     script:
     """
@@ -19,7 +24,7 @@ process COLLECT_READ_COUNTS {
         -I ${cram} \\
         --read-index ${crai} \\
         -L ${intervals} \\
-        -O ${sample_id}_counts.txt \\
+        -O ${sample_id}_${intervals.baseName}_counts.txt \\
         --format TSV \\
         --interval-merging-rule OVERLAPPING_ONLY \\
         --read-filter PassesVendorQualityCheckReadFilter --read-filter HasReadGroupReadFilter \\
@@ -33,6 +38,6 @@ process COLLECT_READ_COUNTS {
 
     stub:
     """
-    touch ${sample_id}_counts.txt
+    touch ${sample_id}_${intervals.baseName}_counts.txt
     """
 }
