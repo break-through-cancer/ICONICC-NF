@@ -33,7 +33,7 @@ workflow CNV_CORE {
     FILTER_VARIANTS(SUBSET_PAIR_VCF.out)
     ITER_ISEC(FILTER_VARIANTS.out.combine(ref_dir_1000g))
     HETVAR_FILTER(ITER_ISEC.out)
-    EAGLE_PHASING(HETVAR_FILTER.out.map { meta, het, _idx -> [ meta, het ] }.combine(ref_dir_1000g).combine(genetic_map))
+    EAGLE_PHASING(HETVAR_FILTER.out.combine(ref_dir_1000g).combine(genetic_map))
     INDEX_PHASED(EAGLE_PHASING.out)
 
     query_input = HETVAR_FILTER.out

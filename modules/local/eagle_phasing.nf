@@ -6,7 +6,7 @@ process EAGLE_PHASING {
     disk '2000 GB'
 
     input:
-    tuple val(meta), path(het_vcfs), path(ref_dir_1000g), path(genetic_map)
+    tuple val(meta), path(het_vcfs), path(het_vcf_indices), path(ref_dir_1000g), path(genetic_map)
 
     output:
     tuple val(meta), path("*_het_eagle2phased.vcf.gz")
