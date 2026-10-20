@@ -49,6 +49,16 @@ class OomRetryTests(unittest.TestCase):
         self.assertIn("PW_ONDEMAND_JOB_QUEUE", block)
         self.assertIn("2147483647", block)
 
+    def test_retries_pbruns_generic_255_oom_sentinel(self):
+        # pbrun's own wrapper catches the real inner exit code (137, SIGKILL) and
+        # re-exits the container with a generic 255 instead of letting 137 propagate --
+        # confirmed via a live run's .exitcode file. Without 255 in this set, a real OOM
+        # fails outright on attempt 1 and the task.attempt-scaled memory above never gets
+        # a chance to help.
+        text = (ROOT / ".cirro" / "process-compute.config").read_text()
+        block = with_name_block(text, "PARABRICKS_HAPLOTYPECALLER")
+        self.assertIn("255", block)
+
 
 if __name__ == "__main__":
     unittest.main()
