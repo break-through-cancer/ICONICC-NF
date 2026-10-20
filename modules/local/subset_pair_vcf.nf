@@ -11,9 +11,17 @@ process SUBSET_PAIR_VCF {
     tuple val(meta), path("*.pair_subset.vcf.gz"), path("*.pair_subset.vcf.gz.tbi")
 
     script:
+    // parabricks_bqsr -- this pipeline's sole alignment-entry source (README "Cirro
+    // deployment") -- embeds each CRAM's read group as SM:${patient}_${sample}, not the
+    // bare sample id (subworkflows/local/samplesheet_to_fastqs/main.nf in that repo).
+    // GenomicsDBImport/GenotypeGVCFs carry that embedded name straight into the joint
+    // VCF's own sample columns, so the subset-by-name here must match the same
+    // convention, confirmed against a real run's #CHROM line.
+    def normal_sm = "${meta.patient}_${meta.normal_sample_id}"
+    def tumor_sm  = "${meta.patient}_${meta.tumor_sample_id}"
     """
     set -euo pipefail
-    bcftools view -s ${meta.normal_sample_id},${meta.tumor_sample_id} ${vcf} \\
+    bcftools view -s ${normal_sm},${tumor_sm} ${vcf} \\
         -O z -o ${meta.participant_id}.pair_subset.vcf.gz
     bcftools index --tbi ${meta.participant_id}.pair_subset.vcf.gz
     """

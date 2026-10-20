@@ -123,6 +123,15 @@ fragile.
 pair (see §5, sarek's joint-calling is cohort-wide, not pairwise) and pins the column
 order `hetvarFilter` needs, in one step. Do this before any other CNV-half processing.
 
+**Verified against a real Cirro run**: the joint VCF's actual `#CHROM` sample columns are
+not the bare `normal_sample_id`/`tumor_sample_id` — `parabricks_bqsr` (this pipeline's
+sole alignment-entry source) embeds each CRAM's read group as `SM:${patient}_${sample}`,
+which GenomicsDBImport/GenotypeGVCFs carry straight through. `SUBSET_PAIR_VCF` subsets by
+`${patient}_${normal_sample_id}`/`${patient}_${tumor_sample_id}` to match. This is a fixed
+property of `parabricks_bqsr`'s own read-group convention, not something either pipeline
+is expected to change — if that convention ever changes, `SUBSET_PAIR_VCF` must change
+with it.
+
 ## 5. Joint genotyping — reuse sarek's subworkflow directly, not the top-level pipeline
 
 `nf-core/sarek`'s `subworkflows/local/bam_joint_calling_germline_gatk/main.nf`
