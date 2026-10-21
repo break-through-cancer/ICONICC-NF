@@ -234,6 +234,32 @@ class ProcessFormTests(unittest.TestCase):
         mapping = json.loads((here / "process-input.json").read_text())
         self.assertEqual(mapping["haplotypecaller_memory_gb"], "$.dataset.params.haplotypecaller_memory_gb")
 
+    def test_scatter_params_are_offered_and_mapped(self):
+        # SPEC.md Sec14.2: read_counts_scatter_* and cnv_scatter_* share the same
+        # groups/per_chromosome convention and the same nextflow.config defaults
+        # (groups / 8 / groups / 4) -- the form fields mirror those defaults exactly so
+        # leaving a field untouched on the launch form matches a raw-params run.
+        import json
+        here = Path(__file__).parent
+        properties = json.loads((here / "process-form.json").read_text())["form"]["properties"]
+        mapping = json.loads((here / "process-input.json").read_text())
+
+        mode_fields = {"read_counts_scatter_mode": "groups", "cnv_scatter_mode": "groups"}
+        count_fields = {"read_counts_scatter_count": 8, "cnv_scatter_count": 4}
+
+        for name, default in mode_fields.items():
+            field = properties[name]
+            self.assertEqual(field["type"], "string")
+            self.assertEqual(set(field["enum"]), {"groups", "per_chromosome"})
+            self.assertEqual(field["default"], default)
+            self.assertEqual(mapping[name], f"$.dataset.params.{name}")
+
+        for name, default in count_fields.items():
+            field = properties[name]
+            self.assertEqual(field["type"], "integer")
+            self.assertEqual(field["default"], default)
+            self.assertEqual(mapping[name], f"$.dataset.params.{name}")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,9 @@
 {
   "input": "$.dataset.s3|/config/manifest.csv",
   "outdir": "$.dataset.dataPath",
-  "haplotypecaller_memory_gb": "$.dataset.params.haplotypecaller_memory_gb"
+  "haplotypecaller_memory_gb": "$.dataset.params.haplotypecaller_memory_gb",
+  "read_counts_scatter_mode": "$.dataset.params.read_counts_scatter_mode",
+  "read_counts_scatter_count": "$.dataset.params.read_counts_scatter_count",
+  "cnv_scatter_mode": "$.dataset.params.cnv_scatter_mode",
+  "cnv_scatter_count": "$.dataset.params.cnv_scatter_count"
 }
