@@ -238,27 +238,44 @@ class ProcessFormTests(unittest.TestCase):
         # SPEC.md Sec14.2: read_counts_scatter_* and cnv_scatter_* share the same
         # groups/per_chromosome convention and the same nextflow.config defaults
         # (groups / 8 / groups / 4) -- the form fields mirror those defaults exactly so
-        # leaving a field untouched on the launch form matches a raw-params run.
+        # leaving a field untouched on the launch form matches a raw-params run. Each
+        # pair is nested under a parent object using JSON Schema dependencies/oneOf
+        # (same mechanism break-through-cancer/parabricks-fq2bam-bqsr's own
+        # process-form.json uses for its output_fmt/cram_version pair) so the shard-
+        # count field is hidden entirely on the form when mode is 'per_chromosome',
+        # where it has no effect.
         import json
         here = Path(__file__).parent
         properties = json.loads((here / "process-form.json").read_text())["form"]["properties"]
         mapping = json.loads((here / "process-input.json").read_text())
 
-        mode_fields = {"read_counts_scatter_mode": "groups", "cnv_scatter_mode": "groups"}
-        count_fields = {"read_counts_scatter_count": 8, "cnv_scatter_count": 4}
+        groups = {
+            "read_counts_scatter": ("read_counts_scatter_mode", "read_counts_scatter_count", 8),
+            "cnv_scatter": ("cnv_scatter_mode", "cnv_scatter_count", 4),
+        }
 
-        for name, default in mode_fields.items():
-            field = properties[name]
-            self.assertEqual(field["type"], "string")
-            self.assertEqual(set(field["enum"]), {"groups", "per_chromosome"})
-            self.assertEqual(field["default"], default)
-            self.assertEqual(mapping[name], f"$.dataset.params.{name}")
+        for parent, (mode_name, count_name, count_default) in groups.items():
+            group = properties[parent]
+            self.assertEqual(group["type"], "object")
 
-        for name, default in count_fields.items():
-            field = properties[name]
-            self.assertEqual(field["type"], "integer")
-            self.assertEqual(field["default"], default)
-            self.assertEqual(mapping[name], f"$.dataset.params.{name}")
+            mode_field = group["properties"][mode_name]
+            self.assertEqual(mode_field["type"], "string")
+            self.assertEqual(set(mode_field["enum"]), {"groups", "per_chromosome"})
+            self.assertEqual(mode_field["default"], "groups")
+            self.assertEqual(mapping[mode_name], f"$.dataset.params.{parent}.{mode_name}")
+            self.assertEqual(mapping[count_name], f"$.dataset.params.{parent}.{count_name}")
+
+            branches = group["dependencies"][mode_name]["oneOf"]
+            groups_branch = next(b for b in branches if b["properties"][mode_name]["enum"] == ["groups"])
+            per_chr_branch = next(b for b in branches if b["properties"][mode_name]["enum"] == ["per_chromosome"])
+
+            count_field = groups_branch["properties"][count_name]
+            self.assertEqual(count_field["type"], "integer")
+            self.assertEqual(count_field["default"], count_default)
+
+            # The shard-count field must not appear at all on the per_chromosome
+            # branch -- that's what actually hides it on the form, not just a UI hint.
+            self.assertNotIn(count_name, per_chr_branch["properties"])
 
 
 if __name__ == "__main__":
