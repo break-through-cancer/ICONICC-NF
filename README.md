@@ -103,10 +103,15 @@ in one task) scatter the same way, over the same `--scatter_chromosomes` univers
 single-task deliberately (3.8 min / 0.8 min for all 23 chromosomes combined — scattering
 them would likely add more overhead than it would save; see `SPEC.md` §14.1).
 
-Only the five final outputs named in `SPEC.md` §6 are published to `--outdir`:
-`read_depth`, `seg_file`, `ac_cts`, `segment_plots`, `segment_cts`. Publishing is
-disabled for every upstream process, whose per-chromosome intermediates run to
-hundreds of GB per run and are not consumed downstream.
+The five final outputs named in `SPEC.md` §6 (`read_depth`, `seg_file`, `ac_cts`,
+`segment_plots`, `segment_cts`) are published to `--outdir`, plus each sample's indexed
+germline GVCF (from `INDEX_GVCF`, under `index_gvcf/`) — a standard GATK-format GVCF
+(`--gvcf` mode, same GQ confidence bands and annotation groups any GATK joint-genotyping
+pipeline expects), reusable beyond this pipeline's own CNV analysis. This is a genuine
+addition beyond the original WDL pipeline's own output set, not something it ever
+published. Publishing stays disabled for every other upstream process, whose
+per-chromosome intermediates run to hundreds of GB per run and are not consumed
+downstream.
 
 ## Testing
 

@@ -257,6 +257,16 @@ static, unchanged:  tumor_sample_id, normal_sample_id, participant_id, sample_se
 Final outputs (from `ICONICC_paired.3.wdl`'s own `output{}` block, carry over unchanged):
 `read_depth`, `seg_file`, `ac_cts`, `segment_plots`, `segment_cts`.
 
+**Post-Phase-3 addition, beyond WDL parity**: each sample's indexed germline GVCF (from
+`INDEX_GVCF`) is also published. The original WDL never published per-sample GVCFs at
+all, so this isn't restoring prior behavior — it's a deliberate new output, since
+`PARABRICKS_HAPLOTYPECALLER` already runs in standard `--gvcf` mode (same GQ confidence
+bands and GATK annotation groups any GATK joint-genotyping pipeline expects) and the
+GVCF was otherwise only ever a discarded intermediate. Published from `INDEX_GVCF`, not
+`PARABRICKS_HAPLOTYPECALLER` directly, since `INDEX_GVCF` re-emits the GVCF alongside its
+own freshly-built `.tbi` — publishing from the earlier process too would copy the
+identical file into `results/` twice under two different directory names.
+
 ## 7. Container/version notes — resolved
 
 - Existing WDL mixes GATK **4.2.0.0** (`CramToBamTask` only, via `gitc_docker`) and
@@ -669,6 +679,15 @@ vendored GATK4 module's container to 4.2.6.1 via `nextflow.config`, matching the
 exactly and keeping one GATK version across the whole pipeline (consistent with §7's
 CNV-half resolution). The dev flagged this as provisional — a candidate for an org-wide
 GATK version bump later, revisited outside this port's scope.
+
+**GPU-accelerated joint genotyping — deferred, not rejected.** Parabricks 4.7 has its own
+`genotypegvcf` tool (GPU-accelerated `GenotypeGVCFs` equivalent), but it is not a drop-in
+swap for `GATK4_GENOTYPEGVCFS` alone: a real NVIDIA forum report says `pbrun genotypegvcf`
+does not work against a workspace built by GATK's own `GenomicsDBImport`, so using it would
+mean swapping the whole `GATK4_GENOMICSDBIMPORT`→`GATK4_GENOTYPEGVCFS` chain for Parabricks'
+own GenomicsDB-building tools (`creategenomicsdb`→`importgvcftodb`→`selectvariants`→
+`genotypegvcf`), not just one container. Same GenomicsDB-workspace-merge coupling already
+noted above for interval scatter. Worth revisiting as a backend swap, not a quick win.
 
 ### 12.7 Testing & accepted gaps
 
