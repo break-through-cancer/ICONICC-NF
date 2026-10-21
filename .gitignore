@@ -6,6 +6,9 @@
 work/
 results/
 .nf-test*
+# Personal-machine nf-test override (e.g. local reference paths) -- never shared/committed
+nf-test.config
+tests/local.nextflow.config
 tests/fixtures/*
 !tests/fixtures/cnv_core/
 tests/fixtures/cnv_core/*

@@ -38,12 +38,12 @@ nextflow_process {
             assert process.success
             // scatter_count=1 matches exactly one file, so Nextflow emits a bare Path
             // here rather than a 1-element List -- normalize before reading.
+            // GATK rewrites each interval's name to '.' on round-trip, so match on
+            // CONTIG/START/END only, not the original binA-binD names.
             def out = process.out[0].get(0)
             def rows = (out instanceof List ? out : [out]).collect { path(it).text.readLines() }.flatten()
-            assert rows.contains('chr1\t100000\t125000\t+\tbinA')
-            assert rows.contains('chr1\t125001\t150000\t+\tbinB')
-            assert rows.contains('chr1\t150001\t175000\t+\tbinC')
-            assert rows.contains('chr1\t175001\t200000\t+\tbinD')
+            def bins = rows.findAll { it.startsWith('chr1\t') }.collect { it.tokenize('\t')[0..2].join('\t') }
+            assert bins == ['chr1\t100000\t125000', 'chr1\t125001\t150000', 'chr1\t150001\t175000', 'chr1\t175001\t200000']
         }
     }
 
