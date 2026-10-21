@@ -105,7 +105,7 @@ them would likely add more overhead than it would save; see `SPEC.md` §14.1).
 
 The five final outputs named in `SPEC.md` §6 (`read_depth`, `seg_file`, `ac_cts`,
 `segment_plots`, `segment_cts`) are published to `--outdir`, plus each sample's indexed
-germline GVCF (from `INDEX_GVCF`, under `index_gvcf/`) — a standard GATK-format GVCF
+germline GVCF (from `INDEX_GVCF`, under `haplotypecaller/`) — a standard GATK-format GVCF
 (`--gvcf` mode, same GQ confidence bands and annotation groups any GATK joint-genotyping
 pipeline expects), reusable beyond this pipeline's own CNV analysis. This is a genuine
 addition beyond the original WDL pipeline's own output set, not something it ever
