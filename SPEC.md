@@ -837,7 +837,7 @@ as a follow-up, not silently assumed to happen automatically.
 
 ## 14. Scatter-gather for read-counting and the CNV per-chromosome chain (real-world finding, post-Phase-3)
 
-A real (non-toy) tumor/normal pair on DFCI4 pushed `COLLECT_READ_COUNTS`'s single
+A real (non-toy) tumor/normal pair pushed `COLLECT_READ_COUNTS`'s single
 whole-genome GATK call into an estimated tens-of-hours wall-clock, confirmed against
 Broad's own official GATK CNV WDL pipeline and the original ICONICC WDL
 (`ICON_Tasks.2.wdl`/`ICONICC_paired.3.wdl`) both doing the same one-call-per-sample,
