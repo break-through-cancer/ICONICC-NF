@@ -21,6 +21,32 @@ nextflow_process {
         }
     }
 
+    test("groups mode does not merge adjacent intervals into one (real-run regression)") {
+        // Real-run regression: GATK SplitIntervals defaults to merging adjacent intervals.
+        when {
+            process {
+                """
+                input[0] = [ file(params.ref_fasta), file(params.ref_fasta_fai), file(params.ref_fasta_dict) ]
+                input[1] = file("\${projectDir}/tests/fixtures/split_intervals/adjacent_bins.interval_list")
+                input[2] = 'groups'
+                input[3] = 1
+                input[4] = []
+                """
+            }
+        }
+        then {
+            assert process.success
+            // scatter_count=1 matches exactly one file, so Nextflow emits a bare Path
+            // here rather than a 1-element List -- normalize before reading.
+            def out = process.out[0].get(0)
+            def rows = (out instanceof List ? out : [out]).collect { path(it).text.readLines() }.flatten()
+            assert rows.contains('chr1\t100000\t125000\t+\tbinA')
+            assert rows.contains('chr1\t125001\t150000\t+\tbinB')
+            assert rows.contains('chr1\t150001\t175000\t+\tbinC')
+            assert rows.contains('chr1\t175001\t200000\t+\tbinD')
+        }
+    }
+
     test("per_chromosome mode produces one shard per requested chromosome, each containing only that contig") {
         when {
             process {

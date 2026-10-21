@@ -12,10 +12,7 @@ process QUERY_HET_AD {
     script:
     """
     set -euo pipefail
-    # Every chromosome's het VCF carries the identical sample list (all derive from the
-    # same SUBSET_PAIR_VCF output) -- no need for a chr1-specific input, which previously
-    # required staging that one file twice (once standalone, once inside \${all_het}'s
-    # own list), an exact Nextflow input-filename collision confirmed against a real run.
+    # Every chromosome's het VCF carries the identical sample list.
     first_het=\$(echo ${all_het} | awk '{print \$1}')
     samples=\$(bcftools query -l "\${first_het}")
 

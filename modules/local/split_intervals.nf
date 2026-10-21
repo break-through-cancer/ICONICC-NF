@@ -37,9 +37,11 @@ process SPLIT_INTERVALS {
         """
         set -euo pipefail
         mkdir -p shards
+        # Without this, GATK's default (ALL) merges adjacent bins before scattering.
         gatk SplitIntervals \\
             -R ${ref_fasta} \\
             -L ${intervals} \\
+            --interval-merging-rule OVERLAPPING_ONLY \\
             --scatter-count ${scatter_count} \\
             -O shards
         for f in shards/*-scattered.interval_list; do
