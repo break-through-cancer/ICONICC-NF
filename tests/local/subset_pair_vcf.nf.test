@@ -19,6 +19,9 @@ nextflow_process {
             assert process.success
             assert path(process.out[0].get(0)[1]).exists()
             assert path(process.out[0].get(0)[2]).exists()
+            // Resolved VCF-embedded sample names, not meta.normal_sample_id/tumor_sample_id.
+            assert process.out[0].get(0)[3]
+            assert process.out[0].get(0)[4]
         }
     }
 }

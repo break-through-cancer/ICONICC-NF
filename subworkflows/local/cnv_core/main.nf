@@ -61,7 +61,15 @@ workflow CNV_CORE {
     main:
     SUBSET_PAIR_VCF(joint_vcf_ch)
 
-    FILTER_VARIANTS(SUBSET_PAIR_VCF.out)
+    // QUERY_HET_AD (and SUBSET_PAIR_VCF itself) name files by the VCF's own embedded
+    // sample columns, not meta.normal_sample_id/tumor_sample_id -- carried separately to
+    // AC_CALC, the one place that still needs them, rather than reshaping meta.
+    resolved_sample_ids_ch = SUBSET_PAIR_VCF.out
+        .map { meta, _vcf, _idx, normal_sm, tumor_sm -> [ meta, normal_sm, tumor_sm ] }
+
+    FILTER_VARIANTS(
+        SUBSET_PAIR_VCF.out.map { meta, vcf, vcf_index, _normal_sm, _tumor_sm -> [ meta, vcf, vcf_index ] }
+    )
 
     // Scatter-gather for ITER_ISEC/EAGLE_PHASING (SPEC.md Sec14.1); HETVAR_FILTER/INDEX_PHASED stay single-task.
     ITER_ISEC(
@@ -104,7 +112,10 @@ workflow CNV_CORE {
     AC_CALC(
         tumor_counts_ch
             .join(QUERY_HET_AD.out)
-            .map { meta, tumor_counts, hetinfo, ad, phased -> [ meta, tumor_counts, phased, ad, hetinfo ] }
+            .join(resolved_sample_ids_ch)
+            .map { meta, tumor_counts, hetinfo, ad, phased, normal_sm, tumor_sm ->
+                [ meta, tumor_counts, phased, ad, hetinfo, normal_sm, tumor_sm ]
+            }
     )
 
     TANGENT_XY(

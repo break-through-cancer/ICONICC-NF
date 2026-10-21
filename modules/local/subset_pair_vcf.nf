@@ -8,7 +8,7 @@ process SUBSET_PAIR_VCF {
     tuple val(meta), path(vcf), path(vcf_index)
 
     output:
-    tuple val(meta), path("*.pair_subset.vcf.gz"), path("*.pair_subset.vcf.gz.tbi")
+    tuple val(meta), path("*.pair_subset.vcf.gz"), path("*.pair_subset.vcf.gz.tbi"), env('NORMAL_SM'), env('TUMOR_SM')
 
     script:
     // The joint VCF's #CHROM sample columns do not reliably equal the bare
@@ -43,5 +43,10 @@ process SUBSET_PAIR_VCF {
     bcftools view -s "\$normal_sm,\$tumor_sm" ${vcf} \\
         -O z -o ${meta.participant_id}.pair_subset.vcf.gz
     bcftools index --tbi ${meta.participant_id}.pair_subset.vcf.gz
+
+    # Downstream file-naming (QUERY_HET_AD etc.) derives from these same resolved VCF
+    # sample names, not meta.normal_sample_id/tumor_sample_id -- export them for AC_CALC.
+    export NORMAL_SM="\$normal_sm"
+    export TUMOR_SM="\$tumor_sm"
     """
 }
