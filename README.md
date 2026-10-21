@@ -73,6 +73,8 @@ Reference defaults that may be worth overriding:
 | `--scatter_chromosomes` | `chr1-22 + X` (hg38; matches `--ref_dir_1000g`'s own per-chromosome files) |
 | `--read_counts_scatter_mode` | `groups` (`groups` or `per_chromosome`; see below) |
 | `--read_counts_scatter_count` | `8` (shards per sample, `groups` mode only) |
+| `--cnv_scatter_mode` | `groups` (`groups` or `per_chromosome`; see below) |
+| `--cnv_scatter_count` | `4` (shards per pair, `groups` mode only) |
 
 `PARABRICKS_HAPLOTYPECALLER` and the GATK joint-genotyping chain
 (`GATK4_GENOMICSDBIMPORT`, `GATK4_GENOTYPEGVCFS`, `VARIANTRECALIBRATOR_SNP`/`_INDEL`,
@@ -91,8 +93,15 @@ modes: `groups` (default) splits into `--read_counts_scatter_count` size-balance
 via GATK's own `SplitIntervals`, bounding total job count for cohort-scale runs; `per_chromosome`
 shards one-per-entry in `--scatter_chromosomes` instead, for maximum parallelism on a
 single-sample run where job count isn't the concern. `--scatter_chromosomes` is also the
-chromosome universe the CNV per-chromosome chain's own (planned) scatter will use —
-override it for other species/reference builds.
+chromosome universe `--cnv_scatter_mode`/`--cnv_scatter_count` use — override it for
+other species/reference builds.
+
+`ITER_ISEC`/`EAGLE_PHASING` (the CNV chain's two slowest steps — real timing on a
+production pair: 63.7 min and 65.7 min respectively, for all 23 chromosomes sequentially
+in one task) scatter the same way, over the same `--scatter_chromosomes` universe, via
+`--cnv_scatter_mode`/`--cnv_scatter_count`. `HETVAR_FILTER`/`INDEX_PHASED` stay
+single-task deliberately (3.8 min / 0.8 min for all 23 chromosomes combined — scattering
+them would likely add more overhead than it would save; see `SPEC.md` §14.1).
 
 Only the five final outputs named in `SPEC.md` §6 are published to `--outdir`:
 `read_depth`, `seg_file`, `ac_cts`, `segment_plots`, `segment_cts`. Publishing is

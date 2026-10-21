@@ -846,17 +846,23 @@ beyond any prior version of this pipeline, not catching up to a known pattern.
 
 ### 14.1 What's scattered, what isn't
 
-- **`SAMPLE_READ_COUNTS`** (`COLLECT_READ_COUNTS`): scattered. Implemented this phase.
-- **CNV per-chromosome chain** (`ITER_ISEC` → `HETVAR_FILTER` → `EAGLE_PHASING` →
-  `INDEX_PHASED` → `QUERY_HET_AD`): all five already internally loop per-chromosome
-  sequentially inside one task each (`for i in {1..22} X; do ...; done`-style). No
-  cross-chromosome state in any of them (each `bcftools`/`eagle` invocation only reads
-  that chromosome's own slice against that chromosome's own reference-panel file) —
-  scattering into parallel per-chromosome/per-group tasks and gathering the output list
-  before the next stage is exactly equivalent to today's sequential-loop result, not an
-  approximation. `EAGLE_PHASING` (`cpus 16, memory 128 GB, disk 2000 GB`, run 23x
-  sequentially per pair today) is the highest-value target in this chain. Not yet
-  implemented as of this section being written; tracked as the next piece of this work.
+- **`SAMPLE_READ_COUNTS`** (`COLLECT_READ_COUNTS`): scattered. Implemented in Phase 3.
+- **`ITER_ISEC`/`EAGLE_PHASING`**: scattered, by the same `cnv_scatter_mode`/
+  `cnv_scatter_count` chromosome groups (reused across both, so shard boundaries match —
+  see `buildChrGroups()` in `subworkflows/local/cnv_core/main.nf`). `EAGLE_PHASING`
+  (`cpus 16, memory 128 GB, disk 2000 GB`, run 23x sequentially per pair before this) was
+  the highest-value target in this chain. `ITER_ISEC` needed a module change (its
+  chromosome loop was hardcoded; now takes the shard's chromosome list as a `val` input).
+  `EAGLE_PHASING` needed none — it already loops over whatever het VCFs it's handed and
+  derives each chromosome from the filename, so scattering it is a pure channel-wiring
+  change in `cnv_core/main.nf` (subset `HETVAR_FILTER`'s gathered output by filename
+  before each shard).
+- **`HETVAR_FILTER`/`INDEX_PHASED`**: deliberately NOT scattered. Real timing on a
+  production tumor/normal pair's full 23-chromosome sequential loop: `ITER_ISEC` 63.7
+  min, `HETVAR_FILTER` 3.8 min, `EAGLE_PHASING` 65.7 min, `INDEX_PHASED` 0.8 min — the two
+  fast steps stay single-task, gathering `ITER_ISEC`'s/`EAGLE_PHASING`'s shard outputs
+  back into one full-chromosome-set list first, since per-task scatter overhead would
+  likely cost more than splitting ~4-minute (or ~1-minute) steps would save.
 - **Joint-genotyping chain** (`GenomicsDBImport` onward): explicitly NOT reopened here —
   §12.6 already documents that decision (`--merge-input-intervals` consumes the whole
   interval list in one shot; a real scatter there needs a GenomicsDB-workspace merge
@@ -885,9 +891,17 @@ beyond any prior version of this pipeline, not catching up to a known pattern.
   `SplitIntervals --scatter-count N` already gives for free, so there was nothing to
   gain by reimplementing it by hand.
 - `params.scatter_chromosomes` is the reusable, species-overridable chromosome universe
-  for both this and the (pending) CNV-chain scatter — overriding it is also most of
-  what canine support needs for the hardcoded `{1..22} X` loops documented in
-  `iconicc-nf-canine-expansion.md`.
+  for both this and the CNV-chain scatter (`cnv_scatter_mode`/`cnv_scatter_count`) —
+  overriding it is also most of what canine support needs for the hardcoded
+  `{1..22} X` loops documented in `iconicc-nf-canine-expansion.md`.
+- The CNV chain's `cnv_scatter_mode`/`cnv_scatter_count` follow the same two-mode naming
+  convention but partition whole chromosome *names* directly, with no GATK call: there's
+  no genomic interval to split, just a list of discrete chromosome identifiers.
+  `per_chromosome` is one shard per entry, same as above. `groups` round-robins
+  `scatter_chromosomes` into `cnv_scatter_count` shards by list index (`buildChrGroups()`
+  in `subworkflows/local/cnv_core/main.nf`) rather than running `SplitIntervals` —
+  `scatter_chromosomes` is already ordered largest-to-smallest (autosomes, then X), so
+  interleaving by index balances shard sizes without needing interval-size data.
 
 ### 14.3 Failure semantics — sequenced deliberately, not "do it all at once"
 

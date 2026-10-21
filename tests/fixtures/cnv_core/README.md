@@ -78,9 +78,11 @@ these as fixtures reference the bare names above. Drop the prefix when copying.
 | `phased/TEST_PT_chr{1..22,X}_het_eagle2phased.vcf.gz` | `EAGLE_PHASING` (Eagle2 phasing against the 1000G panel) | `index_phased.nf.test`, `query_het_ad.nf.test` |
 | `phased/TEST_PT_chr{1..22,X}_het_eagle2phased.vcf.gz.tbi` | `INDEX_PHASED` (tabix indices for the phased VCFs) | `query_het_ad.nf.test` |
 
-`query_het_ad.nf.test` additionally reads
-`het/TEST_PT_chr1_het.vcf.gz` by exact name, to pull the sample list — it is
-the chr1 member of the `het/` set above, not a separate file.
+`QUERY_HET_AD` derives its sample list from whichever het VCF it receives first (every
+chromosome carries the same sample list) rather than needing a chr1-specific file —
+an earlier version singled out chr1 explicitly, which required staging that one file
+twice under the same two Nextflow inputs and failed with a real filename collision the
+first time a run actually reached this step on real data.
 
 ### Allelic-count and segmentation stage (derived)
 

@@ -9,7 +9,6 @@ nextflow_process {
                 """
                 input[0] = [
                     [participant_id: 'TEST_PT'],
-                    file("\${projectDir}/tests/fixtures/cnv_core/het/TEST_PT_chr1_het.vcf.gz"),
                     files("\${projectDir}/tests/fixtures/cnv_core/het/*_het.vcf.gz"),
                     files("\${projectDir}/tests/fixtures/cnv_core/het/*_het.vcf.gz.tbi"),
                     files("\${projectDir}/tests/fixtures/cnv_core/phased/*_het_eagle2phased.vcf.gz"),
