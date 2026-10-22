@@ -533,8 +533,10 @@ Composes vendored nf-core modules directly — `GATK4_GENOMICSDBIMPORT`,
 subworkflow as a black box (decision log below explains why). Chain, per pair:
 
 ```
-GenomicsDBImport(normal_gvcf, tumor_gvcf, calling_intervals)
-  → GenotypeGVCFs                                     (one call, whole calling_intervals region)
+SplitIntervals(calling_intervals)                      (§12.6: scattered 2026-10-22)
+  → GenomicsDBImport(normal_gvcf, tumor_gvcf, shard) ┐  (one call per shard)
+  → GenotypeGVCFs(shard)                             ┘  (one call per shard)
+  → GatherGenotypedVcf                                  (bcftools concat + sort, per pair)
   → VariantFiltration  --filter-expression "ExcessHet > 54.69" --filter-name ExcessHet
   → MakeSitesOnlyVcf                                   (training input only, not the final VCF)
   → VariantRecalibrator(SNP, on sites-only)  ┐
@@ -563,10 +565,13 @@ dropped), and `MakeSitesOnlyVcf`'s output is used only as `VariantRecalibrator`'
 input, per the WDL. `ext.args`/tranche overrides for `VariantRecalibrator`/`ApplyVQSR`
 (SNP/INDEL) are exactly §5.1's already-resolved values — no new decision needed there.
 
-No `BCFTOOLS_SORT`/`MergeVcfs` step: those exist in sarek's subworkflow purely to
-reassemble interval-scattered shards, and per the no-scatter decision below,
-`GenotypeGVCFs` runs once per pair over the whole `calling_intervals` region and already
-emits one complete, sorted VCF.
+`GenomicsDBImport`/`GenotypeGVCFs` are interval-scattered (§12.6, reversed 2026-10-22,
+reusing `SAMPLE_READ_COUNTS`'s own `SPLIT_INTERVALS` pattern), with a local
+`GATHER_GENOTYPED_VCF` module (bcftools concat + sort — not sarek's `BCFTOOLS_SORT`/
+`MergeVcfs`, matching this repo's own small local-bcftools-module convention instead)
+reassembling the per-shard VCFs into one genome-wide VCF immediately afterward.
+`VariantFiltration` onward still runs once per pair over the whole genome, unscattered —
+VQSR needs genome-wide site statistics.
 
 **Exact `ext.args`/resource values** — read directly from `ICONICC_paired.3.wdl`'s own
 input-block defaults (lines 56-59) and confirmed unoverridden in the production Cirro
@@ -643,14 +648,30 @@ manifest with no purpose once scatter is dropped.
 
 ### 12.6 Decision log
 
-**Interval scatter — dropped for v1.** The WDL scatters `HaplotypeCaller` and
-`GenotypeGVCFs`/VQSR across ~50 interval shards, a CPU-parallelism trick from the original
-Broad WGS-joint-calling template. Parabricks HaplotypeCaller already processes the whole
-genome in one GPU job — the reason for that scatter disappears on the calling side — and
-this pipeline runs one patient's two samples per invocation, never a cohort, so
-joint-genotyping's scatter buys little either. **Resolved (confirmed with the dev)**: run
-each stage as a single whole-genome job per pair. This is why §12.3's chain has no
-`BCFTOOLS_SORT`/merge step and why `JOINT_GENOTYPING` needs no `num_intervals` bookkeeping.
+**Interval scatter — dropped for v1, then reinstated for `GenomicsDBImport`/`GenotypeGVCFs`
+(2026-10-22).** The WDL scatters `HaplotypeCaller` and `GenotypeGVCFs`/VQSR across ~50
+interval shards, a CPU-parallelism trick from the original Broad WGS-joint-calling template.
+Parabricks HaplotypeCaller already processes the whole genome in one GPU job — the reason
+for that scatter disappears on the calling side — and this pipeline runs one patient's two
+samples per invocation, never a cohort, so joint-genotyping's scatter buys little either.
+**Originally resolved (confirmed with the dev)**: run each stage as a single whole-genome job
+per pair. This is why §12.3's chain had no `BCFTOOLS_SORT`/merge step and why
+`JOINT_GENOTYPING` needed no `num_intervals` bookkeeping.
+
+That assumption was made before any real Parabricks/GATK execution existed to check it
+against (§12.7 listed this as an accepted gap at the time). A real Cirro run subsequently
+showed `GATK4_GENOMICSDBIMPORT` (108 min) and `GATK4_GENOTYPEGVCFS` (138 min) running
+serially for 246 minutes — about 40% of the entire pipeline's ~10.2-hour critical path — for
+a single tumor/normal pair, directly contradicting "buys little." **Re-resolved**: scatter
+just these two steps by interval, reusing `SAMPLE_READ_COUNTS`'s own `SPLIT_INTERVALS`/gather
+pattern (`params.joint_genotyping_scatter_mode`/`_count`, `nextflow.config`) rather than
+building new scatter infrastructure, with a new `GATHER_GENOTYPED_VCF` module (bcftools
+concat + sort, matching this repo's other local bcftools modules) reassembling the per-shard
+VCFs into one genome-wide VCF before `VARIANT_FILTRATION`. `VARIANT_FILTRATION` onward
+(including both `GATK4_VARIANTRECALIBRATOR`/`GATK4_APPLYVQSR` calls) stays a single
+whole-genome job per pair — VQSR's Gaussian mixture model needs genome-wide site statistics,
+so it cannot be scattered the same way, and that part of the original no-scatter reasoning
+still holds.
 
 **Joint-genotyping integration — vendor sarek's modules, write our own orchestration, not
 sarek's subworkflow.** Three approaches were weighed: (A) fork sarek's

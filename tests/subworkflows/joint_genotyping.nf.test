@@ -63,12 +63,15 @@ nextflow_workflow {
             }
         }
         then {
-            // Known, accepted gap (Global Constraints above): the GVCF fixtures are
-            // 0-byte placeholders (same convention as tests/nf-core/gatk4/genomicsdbimport.nf.test),
-            // so GATK4_GENOMICSDBIMPORT fails immediately on malformed VCF content
-            // ("We never saw the required CHROM header line") -- the same accepted gap
-            // documented for that module's own test, just surfaced at the first step of
-            // this subworkflow's chain instead of in isolation. Even if the fixtures had a
+            // Known, accepted gap (Global Constraints above): the reference/GVCF fixtures
+            // are 0-byte placeholders (same convention as
+            // tests/nf-core/gatk4/genomicsdbimport.nf.test), so the chain fails immediately
+            // on malformed/empty content -- SPLIT_INTERVALS now hits this first ("We require
+            // a sequence dictionary from a reference"), since interval scatter (SPEC.md
+            // Sec12.6) runs ahead of GenomicsDBImport; before the scatter was added,
+            // GenomicsDBImport itself failed first on the GVCF fixtures' malformed header
+            // ("We never saw the required CHROM header line"). Same accepted gap, just
+            // surfaced one step earlier in the chain. Even if the fixtures had a
             // valid header, VariantRecalibrator's Gaussian mixture model could not fit on
             // stand-in resource files and near-empty joint-called data further down the
             // chain regardless of container or network access -- a hard algorithmic

@@ -26,6 +26,9 @@ tests/fixtures/cnv_core/*
 # gather_read_counts fixtures ARE committed (hand-built, format-accurate TSV rows, no
 # genomic data)
 !tests/fixtures/gather_read_counts/
+# gather_genotyped_vcf fixtures ARE committed (hand-built, bgzipped/tabix-indexed VCF
+# shards with synthetic records, no genomic data)
+!tests/fixtures/gather_genotyped_vcf/
 
 # Claude Code harness metadata -- worktrees, SDD ledgers/briefs/reports, scheduled-task
 # locks. Never part of this repo's own history, regardless of what ends up inside it.

@@ -120,7 +120,7 @@ nextflow_pipeline {
             assert !log.contains('no matching GVCF from SAMPLE_GERMLINE_CALLING')
 
             // Positive evidence the join fanned out correctly: JOINT_GENOTYPING (via
-            // GATK4_GENOMICSDBIMPORT, its first step) must have succeeded once per pair --
+            // GATK4_GENOMICSDBIMPORT, its first step) must have succeeded for both pairs --
             // one for the tumor_a/normal pair, one for tumor_b/normal -- not zero (the
             // whole chain never reached JOINT_GENOTYPING) and not one (the fan-out
             // collapsed to a single pair). Uses workflow.trace.succeeded() rather than
@@ -128,8 +128,15 @@ nextflow_pipeline {
             // submitted but failed would still show up in .tasks(), so counting on that
             // would only prove GATK4_GENOMICSDBIMPORT was attempted twice, not that it
             // completed successfully twice.
+            //
+            // GATK4_GENOMICSDBIMPORT now runs once per (pair, interval shard) rather than
+            // once per pair (SPEC.md Sec12.6's interval scatter) -- its tag is
+            // "<participant_id>.shard_<shard_name>" (subworkflows/local/joint_genotyping/
+            // main.nf), so distinct *pairs* is the count of distinct participant_id
+            // prefixes, not the raw task count.
             def gendb_tasks = workflow.trace.succeeded().findAll { it.name.contains('GATK4_GENOMICSDBIMPORT') }
-            assert gendb_tasks.size() == 2
+            def gendb_pairs = gendb_tasks.collect { it.name.replaceFirst(/.*\((.+)\.shard_.+\)/, '$1') }.toSet()
+            assert gendb_pairs.size() == 2
         }
     }
 }

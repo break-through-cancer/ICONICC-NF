@@ -7,8 +7,9 @@ See `SPEC.md` for the full design. Two logical halves:
 
 1. Per-sample germline calling (`SAMPLE_GERMLINE_CALLING`, Parabricks HaplotypeCaller)
    + joint genotyping/VQSR (`JOINT_GENOTYPING`, GATK4 modules vendored from
-   nf-core/sarek and composed with this pipeline's own no-scatter orchestration —
-   see `SPEC.md` §12).
+   nf-core/sarek and composed with this pipeline's own orchestration — GenomicsDBImport/
+   GenotypeGVCFs interval-scattered, VariantFiltration onward a single whole-genome call
+   per pair; see `SPEC.md` §12).
 2. The CNV/allelic-analysis core, hand-ported from `ICON_Tasks.2.wdl` — the actual
    science; see `subworkflows/local/cnv_core/`.
 
@@ -75,6 +76,8 @@ Reference defaults that may be worth overriding:
 | `--read_counts_scatter_count` | `8` (shards per sample, `groups` mode only) |
 | `--cnv_scatter_mode` | `groups` (`groups` or `per_chromosome`; see below) |
 | `--cnv_scatter_count` | `4` (shards per pair, `groups` mode only) |
+| `--joint_genotyping_scatter_mode` | `groups` (`groups` or `per_chromosome`; see below) |
+| `--joint_genotyping_scatter_count` | `8` (shards per pair, `groups` mode only) |
 
 `PARABRICKS_HAPLOTYPECALLER` and the GATK joint-genotyping chain
 (`GATK4_GENOMICSDBIMPORT`, `GATK4_GENOTYPEGVCFS`, `VARIANTRECALIBRATOR_SNP`/`_INDEL`,
@@ -102,6 +105,14 @@ in one task) scatter the same way, over the same `--scatter_chromosomes` univers
 `--cnv_scatter_mode`/`--cnv_scatter_count`. `HETVAR_FILTER`/`INDEX_PHASED` stay
 single-task deliberately (3.8 min / 0.8 min for all 23 chromosomes combined — scattering
 them would likely add more overhead than it would save; see `SPEC.md` §14.1).
+
+`JOINT_GENOTYPING`'s `GATK4_GENOMICSDBIMPORT`/`GATK4_GENOTYPEGVCFS` scatter the same way
+too (real timing: these two steps cost 246 minutes combined, ~40% of the whole pipeline's
+critical path, run serially for a single pair) via `--joint_genotyping_scatter_mode`/
+`--joint_genotyping_scatter_count`, with a `GATHER_GENOTYPED_VCF` module (bcftools concat
++ sort) reassembling the shards into one genome-wide VCF immediately after. Everything
+from `VariantFiltration` onward stays a single whole-genome call per pair — VQSR needs
+genome-wide site statistics, so it isn't scattered (see `SPEC.md` §12.6).
 
 The five final outputs named in `SPEC.md` §6 (`read_depth`, `seg_file`, `ac_cts`,
 `segment_plots`, `segment_cts`) are published to `--outdir`, plus each sample's indexed

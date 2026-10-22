@@ -7,16 +7,18 @@ nextflow_workflow {
     // Companion to tests/subworkflows/joint_genotyping.nf.test, which runs for real and
     // documents the accepted placeholder-fixture gap (GATK4_GENOMICSDBIMPORT fails on the
     // 0-byte GVCF fixtures before real content ever matters). This test runs the exact
-    // same chain under -stub instead: every step in the chain (GATK4_GENOMICSDBIMPORT,
-    // GATK4_GENOTYPEGVCFS, VARIANT_FILTRATION, MAKE_SITES_ONLY_VCF, both
-    // GATK4_VARIANTRECALIBRATOR calls, both GATK4_APPLYVQSR calls) now ships a stub{}
-    // block (VARIANT_FILTRATION/MAKE_SITES_ONLY_VCF got theirs added alongside this test,
-    // matching the pattern modules/local/index_gvcf.nf already established), so the whole
-    // chain substitutes stub output instead of running real GATK, and this genuinely
-    // passes end to end -- including the ext.prefix collision fix between APPLYVQSR_INDEL
-    // and APPLYVQSR_SNP (nextflow.config), and the INDEL-then-SNP chain order (SPEC.md
-    // Sec12.3).
-    test("runs the full GenomicsDBImport -> GenotypeGVCFs -> VariantFiltration -> MakeSitesOnlyVcf -> VariantRecalibrator x2 -> ApplyVQSR (INDEL then SNP) chain under -stub") {
+    // same chain under -stub instead: every step in the chain (SPLIT_INTERVALS,
+    // GATK4_GENOMICSDBIMPORT, GATK4_GENOTYPEGVCFS, GATHER_GENOTYPED_VCF, VARIANT_FILTRATION,
+    // MAKE_SITES_ONLY_VCF, both GATK4_VARIANTRECALIBRATOR calls, both GATK4_APPLYVQSR calls)
+    // now ships a stub{} block (VARIANT_FILTRATION/MAKE_SITES_ONLY_VCF got theirs added
+    // alongside this test, matching the pattern modules/local/index_gvcf.nf already
+    // established), so the whole chain substitutes stub output instead of running real GATK,
+    // and this genuinely passes end to end -- including the ext.prefix collision fix between
+    // APPLYVQSR_INDEL and APPLYVQSR_SNP (nextflow.config), and the INDEL-then-SNP chain order
+    // (SPEC.md Sec12.3). GenomicsDBImport/GenotypeGVCFs each run once per
+    // params.joint_genotyping_scatter_count shard (SPEC.md Sec12.6); GATHER_GENOTYPED_VCF
+    // reassembles them back to one call per pair before VariantFiltration onward.
+    test("runs the full SplitIntervals -> GenomicsDBImport -> GenotypeGVCFs -> Gather -> VariantFiltration -> MakeSitesOnlyVcf -> VariantRecalibrator x2 -> ApplyVQSR (INDEL then SNP) chain under -stub") {
         when {
             workflow {
                 """
@@ -80,12 +82,19 @@ nextflow_workflow {
             assert workflow.out.joint_vcf.size() > 0
 
             // Positive evidence the whole chain actually ran, not just that the workflow
-            // didn't error out early: every named stage in the SPEC.md Sec12.3 chain
-            // executed exactly once, and the two ApplyVQSR calls ran in INDEL-then-SNP
-            // order (chained: APPLYVQSR_SNP consumes APPLYVQSR_INDEL's own VCF output).
+            // didn't error out early: every named stage in the SPEC.md Sec12.3/12.6 chain
+            // executed the expected number of times, and the two ApplyVQSR calls ran in
+            // INDEL-then-SNP order (chained: APPLYVQSR_SNP consumes APPLYVQSR_INDEL's own
+            // VCF output). GenomicsDBImport/GenotypeGVCFs run once per shard -- 8, matching
+            // nextflow.config's params.joint_genotyping_scatter_count default (not readable
+            // from this assertion scope, so kept in sync by hand); SplitIntervals and
+            // GatherGenotypedVcf run once each, bracketing the scatter.
+            def expected_scatter_count = 8
             def task_names = workflow.trace.tasks().collect { it.name }
-            assert task_names.count { it.contains('GATK4_GENOMICSDBIMPORT') } == 1
-            assert task_names.count { it.contains('GATK4_GENOTYPEGVCFS') } == 1
+            assert task_names.count { it.contains('SPLIT_INTERVALS') } == 1
+            assert task_names.count { it.contains('GATK4_GENOMICSDBIMPORT') } == expected_scatter_count
+            assert task_names.count { it.contains('GATK4_GENOTYPEGVCFS') } == expected_scatter_count
+            assert task_names.count { it.contains('GATHER_GENOTYPED_VCF') } == 1
             assert task_names.count { it.contains('VARIANT_FILTRATION') } == 1
             assert task_names.count { it.contains('MAKE_SITES_ONLY_VCF') } == 1
             assert task_names.count { it.contains('VARIANTRECALIBRATOR_SNP') } == 1

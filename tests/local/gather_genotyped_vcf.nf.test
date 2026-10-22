@@ -1,0 +1,39 @@
+nextflow_process {
+    name "Test gather_genotyped_vcf"
+    script "modules/local/gather_genotyped_vcf.nf"
+    process "GATHER_GENOTYPED_VCF"
+
+    test("merges shards in header contig order, not arrival or alphabetical order") {
+        when {
+            process {
+                """
+                // chr10's shard is listed FIRST here, deliberately, to prove the merge
+                // sorts by the shared header's own contig order (chr1, chr2, chr10) rather
+                // than trusting input order or falling into the chr10-before-chr2
+                // alphabetical trap (same convention as GATHER_READ_COUNTS's own test).
+                input[0] = [
+                    [ participant_id: 'TEST_TUMOR_vs_TEST_NORMAL' ],
+                    [
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardB_chr10.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardA_chr2.vcf.gz")
+                    ],
+                    [
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardB_chr10.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardA_chr2.vcf.gz.tbi")
+                    ]
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            def vcf_path = path(process.out[0].get(0)[1])
+            def records = vcf_path.linesGzip.findAll { !it.startsWith('#') }
+            assert records == [
+                'chr2\t1000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1',
+                'chr2\t2000\t.\tC\tT\t50\tPASS\t.\tGT\t0/1',
+                'chr10\t500\t.\tG\tA\t50\tPASS\t.\tGT\t0/1',
+            ]
+        }
+    }
+}
