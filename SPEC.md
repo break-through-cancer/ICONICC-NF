@@ -701,14 +701,34 @@ exactly and keeping one GATK version across the whole pipeline (consistent with 
 CNV-half resolution). The dev flagged this as provisional — a candidate for an org-wide
 GATK version bump later, revisited outside this port's scope.
 
-**GPU-accelerated joint genotyping — deferred, not rejected.** Parabricks 4.7 has its own
-`genotypegvcf` tool (GPU-accelerated `GenotypeGVCFs` equivalent), but it is not a drop-in
-swap for `GATK4_GENOTYPEGVCFS` alone: a real NVIDIA forum report says `pbrun genotypegvcf`
-does not work against a workspace built by GATK's own `GenomicsDBImport`, so using it would
-mean swapping the whole `GATK4_GENOMICSDBIMPORT`→`GATK4_GENOTYPEGVCFS` chain for Parabricks'
-own GenomicsDB-building tools (`creategenomicsdb`→`importgvcftodb`→`selectvariants`→
+**GPU-accelerated joint genotyping — deferred, not rejected; re-evaluated 2026-10-22,
+still deferred.** Parabricks 4.7 has its own `genotypegvcf` tool (GPU-accelerated
+`GenotypeGVCFs` equivalent), but it is not a drop-in swap for `GATK4_GENOTYPEGVCFS` alone:
+a real NVIDIA forum report says `pbrun genotypegvcf` does not work against a workspace
+built by GATK's own `GenomicsDBImport`, so using it would mean swapping the whole
+`GATK4_GENOMICSDBIMPORT`→`GATK4_GENOTYPEGVCFS` chain for Parabricks' own
+GenomicsDB-building tools (`creategenomicsdb`→`importgvcftodb`→`selectvariants`→
 `genotypegvcf`), not just one container. Same GenomicsDB-workspace-merge coupling already
-noted above for interval scatter. Worth revisiting as a backend swap, not a quick win.
+noted above for interval scatter.
+
+Re-evaluated once the interval-scatter fix above shipped and actually targeted the
+measured 246-minute cost directly: every NVIDIA benchmark for Parabricks' GPU tools (the
+"30x WGS in 25 min," "25,000 genomes/year" figures) is for the single-sample germline
+caller this pipeline already runs on GPU (`PARABRICKS_HAPLOTYPECALLER`) — none exist for
+the joint-genotyping/population chain specifically, at any cohort size. Parabricks' own
+docs consistently frame that chain around large cohorts (10s to 1000s of samples); this
+pipeline's actual workload is one normal plus typically 1-2 tumor samples per run, a
+scale where GATK's GenomicsDBImport/GenotypeGVCFs (what sarek and the Broad ecosystem
+already use at this scale) is the standard choice, not a known bottleneck Parabricks is
+documented to fix. The integration cost also didn't shrink: a new 4-tool chain to wire
+and test, an unverified (not confirmed compatible or incompatible) risk that
+`genotypegvcf`'s output matches what `VARIANTRECALIBRATOR_SNP`/`_INDEL` and
+`APPLYVQSR_INDEL`/`_SNP` need — the one part of this chain that stays unscattered and is
+load-bearing for final output correctness — and a second GPU-requiring stage added to a
+pipeline whose GPU/CPU split is otherwise a deliberate architectural choice (`.cirro/
+process-compute.config` scopes GPU scheduling to `PARABRICKS_HAPLOTYPECALLER` only,
+§12.7). Stays deferred: worth revisiting only if this pipeline's usage pattern moves to
+genuinely large cohorts, not a quick win at today's scale.
 
 ### 12.7 Testing & accepted gaps
 
@@ -903,10 +923,11 @@ beyond any prior version of this pipeline, not catching up to a known pattern.
   fast steps stay single-task, gathering `ITER_ISEC`'s/`EAGLE_PHASING`'s shard outputs
   back into one full-chromosome-set list first, since per-task scatter overhead would
   likely cost more than splitting ~4-minute (or ~1-minute) steps would save.
-- **Joint-genotyping chain** (`GenomicsDBImport` onward): explicitly NOT reopened here —
-  §12.6 already documents that decision (`--merge-input-intervals` consumes the whole
-  interval list in one shot; a real scatter there needs a GenomicsDB-workspace merge
-  step, not just file concatenation).
+- **Joint-genotyping chain** (`GenomicsDBImport`/`GenotypeGVCFs`): scattered as of
+  2026-10-22 — §12.6 documents the reversal of this section's original "not reopened
+  here" call, once real timing data showed these two steps costing 246 minutes serially
+  (~40% of the whole critical path) for a single pair. `VariantFiltration` onward is
+  still a single whole-genome call per pair (VQSR needs genome-wide site statistics).
 - **`PARABRICKS_HAPLOTYPECALLER`**: not a scatter candidate — already GPU-accelerated
   (parallel in hardware), and scattering it would add a GVCF-merge step upstream of the
   already-settled joint-genotyping decision for comparatively little gain.
@@ -987,3 +1008,49 @@ after the fact:
   rate-limit exposure once many shards across many samples pull it concurrently from
   cold instances. Mirroring it to `ghcr.io/break-through-cancer/...` (same pattern as
   `iconicc-cnv-r`) is planned alongside the CNV-chain scatter, not yet done.
+
+### 14.5 Tuning review after the joint-genotyping scatter (2026-10-22)
+
+Adding `JOINT_GENOTYPING`'s own scatter (§12.6) raises this pipeline's total job-count
+ceiling further, so three related settings were reviewed together rather than left as
+leftover defaults from before that change existed.
+
+**`cnv_scatter_count`: raised 4 → 8.** The original 4 had no numeric derivation anywhere
+(no comment, commit, or measurement ties it to overhead, provisioning data, or queue
+capacity — it was set by analogy to half of `read_counts_scatter_count`, nothing more).
+Raised to match `read_counts_scatter_count`/`joint_genotyping_scatter_count` now that
+`EAGLE_PHASING`'s resource request is smaller (`cpus 16 → 8, memory 128 → 32 GB, disk
+2000 → 100 GB`, `modules/local/eagle_phasing.nf`) — a smaller, more-numerous request is
+exactly the case that benefits most from more shards, per the same provisioning-overhead
+finding that motivated the resource fix. No test asserts this value. Like the
+joint-genotyping scatter count itself, this is a default pending confirmation against a
+real run (§12.6), not a measured optimum.
+
+**`executor.queueSize`/`submitRateLimit`: left unchanged.** Worked the dataflow math: a
+single pair's peak concurrent AWS Batch job count is roughly 18 (2
+`PARABRICKS_HAPLOTYPECALLER` + `read_counts_scatter_count × 2 samples` = 16
+`COLLECT_READ_COUNTS`, an independent branch not gated on germline calling) to ~26 if
+`JOINT_GENOTYPING`'s 8 shards start before read-counts finishes; `CNV_CORE` adds up to
+`cnv_scatter_count` (now 8) concurrent jobs per stage, sequentially (`ITER_ISEC` then
+`EAGLE_PHASING`, not both at once). Pairs run fully concurrently with each other (no
+serialization barrier anywhere in `main.nf`'s channel topology), so a multi-tumor patient
+multiplies this roughly linearly by pair count. For the committed 2-tumor test fixture
+this is comfortably under `queueSize=100`; a patient with several more tumor samples
+could approach it. Left unchanged regardless: `queueSize`/`submitRateLimit` are an
+explicit shared-resource throttle (`PW_ONDEMAND_JOB_QUEUE` is shared across every
+pipeline in this Cirro project, §14.4) protecting other pipelines on that queue, not a
+capacity ceiling tuned to this pipeline's own job count — raising it is an
+infrastructure-sharing tradeoff this pipeline's own config shouldn't make unilaterally
+without evidence of actual contention. Revisit if a real run shows AWS Batch throttling
+or submission backpressure, not preemptively.
+
+**`GATK4_GENOMICSDBIMPORT`/`GATK4_GENOTYPEGVCFS` memory (`6 * task.attempt` GB): left
+unchanged.** This value is sarek's generic `process_single` default (see the resource
+sizing comment above `withName: 'GATK4_GENOMICSDBIMPORT'` in `nextflow.config`), never
+validated against this pipeline's own data in either direction — unlike `PARABRICKS_HAPLOTYPECALLER`, which has a documented real OOM
+at a fixed 72 GB. No comment, commit, or test ties it to either the old whole-genome call
+or the new per-shard call specifically. Left as-is rather than guessed at in either
+direction: lowering it without evidence risks more `task.attempt` OOM-retry cycles per
+shard now that there are more shards to retry; raising it without evidence spends more
+of the shared queue's memory budget than a small (2-sample) GATK call may need. Revisit
+once a real scattered run gives actual per-shard memory data.

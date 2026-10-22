@@ -75,7 +75,7 @@ Reference defaults that may be worth overriding:
 | `--read_counts_scatter_mode` | `groups` (`groups` or `per_chromosome`; see below) |
 | `--read_counts_scatter_count` | `8` (shards per sample, `groups` mode only) |
 | `--cnv_scatter_mode` | `groups` (`groups` or `per_chromosome`; see below) |
-| `--cnv_scatter_count` | `4` (shards per pair, `groups` mode only) |
+| `--cnv_scatter_count` | `8` (shards per pair, `groups` mode only) |
 | `--joint_genotyping_scatter_mode` | `groups` (`groups` or `per_chromosome`; see below) |
 | `--joint_genotyping_scatter_count` | `8` (shards per pair, `groups` mode only) |
 
