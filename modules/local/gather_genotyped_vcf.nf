@@ -14,12 +14,15 @@ process GATHER_GENOTYPED_VCF {
     // SPLIT_INTERVALS's 'groups' mode balances total interval length across shards by
     // bin-packing possibly non-adjacent intervals together (modules/local/split_intervals.nf),
     // so the shards GenotypeGVCFs produces are not in genomic order relative to each other
-    // even though each shard's own VCF is internally position-sorted. bcftools sort
-    // re-establishes genome-wide order after concat rather than trusting shard arrival or
-    // filename order (same reasoning as GATHER_READ_COUNTS's own dictionary-order sort).
+    // even though each shard's own VCF is internally position-sorted -- the same chromosome
+    // can appear in more than one shard, in non-adjacent blocks once concatenated in shard
+    // order. bcftools concat refuses that by default ("chromosome block ... is not
+    // contiguous"); -a/--allow-overlaps turns that check off. bcftools sort re-establishes
+    // true genome-wide order afterward regardless of concat's own output order (same
+    // reasoning as GATHER_READ_COUNTS's own dictionary-order sort).
     """
     set -euo pipefail
-    bcftools concat --output-type u ${shard_vcfs} \\
+    bcftools concat --allow-overlaps --output-type u ${shard_vcfs} \\
         | bcftools sort --output-type z --temp-dir . --output-file ${meta.participant_id}.genotyped.vcf.gz
     bcftools index --tbi ${meta.participant_id}.genotyped.vcf.gz
     """
