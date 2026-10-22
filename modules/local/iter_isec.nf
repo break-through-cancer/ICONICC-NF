@@ -1,5 +1,5 @@
 process ITER_ISEC {
-    tag "${meta.participant_id}:${chr_group.join(',')}"
+    tag "${meta.participant_id}.chrs_${chr_group.join('_')}"
     container 'quay.io/biocontainers/bcftools@sha256:3130439789ced19fb4ba6e7513d0d12f9bdf3de0618f5b1ce2c76b1835ae347a'
     cpus 2
     memory '4 GB'

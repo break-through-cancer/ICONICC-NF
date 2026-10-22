@@ -1,5 +1,5 @@
 process COLLECT_READ_COUNTS {
-    tag "${sample_id}:${intervals.baseName}"
+    tag "${sample_id}.shard_${intervals.baseName}"
     container 'broadinstitute/gatk@sha256:21c3cb43b7d11891ed4b63cc7274f20187f00387cfaa0433b3e7991b5be34dbe'
     cpus 2
     memory '10 GB'
