@@ -134,6 +134,21 @@ another, where the alignment samplesheet's `patient` column was left blank, embe
 `SUBSET_PAIR_VCF` resolves it from the VCF itself — exact match, or a `_<id>` suffix —
 and hard-errors on anything but exactly one match per side.
 
+**Follow-up, confirmed shipped (2026-10-23)**: `SUBSET_PAIR_VCF` landed as planned, emitting
+`[normal, tumor]` column order via `bcftools view -s`. But `HETVAR_FILTER` itself was never
+updated off its original `GT[1]`/`FORMAT/AD[1:*]` indexing — which, against `[normal,
+tumor]` order, means index 1 is the *tumor* sample, not the normal one. The exact fragility
+this section called out, reintroduced one step later. Caught by comparing a completed WDL
+run against an NF run on the same input/samplesheet: chr10 (a classic GBM LOH chromosome)
+showed a 9.6x gap in post-`HETVAR_FILTER` het-site counts between the two pipelines, traced
+stage-by-stage back from `segment.R`'s output through `HaplotypeCaller` (identical calls),
+VQSR/`Filter` (identical), and `ITER_ISEC` (comparable) to isolate `HETVAR_FILTER` as the
+actual divergence point — filtering on tumor heterozygosity discards exactly the
+germline-het, tumor-LOH sites allelic-ratio CNV detection depends on. Fixed by having
+`HETVAR_FILTER` resolve the normal sample's column position from each VCF's own header at
+runtime (`bcftools query -l`, matched by the same resolved name `SUBSET_PAIR_VCF` exports),
+rather than trusting any particular column order to hold.
+
 ## 5. Joint genotyping — reuse sarek's subworkflow directly, not the top-level pipeline
 
 `nf-core/sarek`'s `subworkflows/local/bam_joint_calling_germline_gatk/main.nf`
