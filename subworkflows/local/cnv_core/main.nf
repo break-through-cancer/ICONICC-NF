@@ -77,9 +77,11 @@ workflow CNV_CORE {
     )
 
     // groupTuple()+flatten() reassembles all shards' files into the flat list HETVAR_FILTER expects.
+    // normal_sm joined in so HETVAR_FILTER can resolve its sample column by name, not index.
     HETVAR_FILTER(
         ITER_ISEC.out.groupTuple()
             .map { meta, vcf_lists, idx_lists -> [ meta, vcf_lists.flatten(), idx_lists.flatten() ] }
+            .join(resolved_sample_ids_ch.map { meta, normal_sm, _tumor_sm -> [ meta, normal_sm ] })
     )
 
     // EAGLE_PHASING needs no module change -- just route it a per-group subset by filename.

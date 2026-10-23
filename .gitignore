@@ -29,6 +29,8 @@ tests/fixtures/cnv_core/*
 # gather_genotyped_vcf fixtures ARE committed (hand-built, bgzipped/tabix-indexed VCF
 # shards with synthetic records, no genomic data)
 !tests/fixtures/gather_genotyped_vcf/
+# hetvar_filter fixtures ARE committed (hand-built, synthetic VCF, no genomic data)
+!tests/fixtures/hetvar_filter/
 
 # Claude Code harness metadata -- worktrees, SDD ledgers/briefs/reports, scheduled-task
 # locks. Never part of this repo's own history, regardless of what ends up inside it.
