@@ -9,6 +9,37 @@ include { AC_CALC             } from '../../../modules/local/ac_calc'
 include { TANGENT_XY          } from '../../../modules/local/tangent_xy'
 include { SEGMENT             } from '../../../modules/local/segment'
 
+// Partitions chromosomes into ITER_ISEC/EAGLE_PHASING's shards -- round-robin for
+// 'groups' (already size-ordered, so this balances shards), one-per-chromosome otherwise.
+def buildChrGroups(mode, count, chromosomes) {
+    if (!(mode in ['groups', 'per_chromosome'])) {
+        error "CNV_CORE: cnv_scatter_mode must be 'groups' or 'per_chromosome', got '${mode}'"
+    }
+    if (mode == 'per_chromosome') {
+        return chromosomes.collect { [it] }
+    }
+    def n = count as int
+    def groups = (0..<n).collect { [] }
+    chromosomes.eachWithIndex { chr, idx -> groups[idx % n] << chr }
+    return groups.findAll { !it.isEmpty() }
+}
+
+// Extracts the chromosome token from the shared "_chr<token>_" filename convention.
+def chrOf(path) {
+    def m = (path.name =~ /_chr([^_]+)_/)
+    if (!m) {
+        error "CNV_CORE: could not extract a chromosome token from filename '${path.name}' (expected '_chr<token>_')"
+    }
+    return m[0][1]
+}
+
+// Fresh channel per call (queue channels split across consumers, don't broadcast); each
+// group wrapped as a 1-tuple so combine() doesn't spread its elements into the tuple.
+def chrGroupChannel() {
+    Channel.fromList(buildChrGroups(params.cnv_scatter_mode, params.cnv_scatter_count, params.scatter_chromosomes))
+        .map { [it] }
+}
+
 workflow CNV_CORE {
     take:
     joint_vcf_ch     // [ meta, joint_vcf, joint_vcf_index ] -- meta is the single uniform
@@ -30,24 +61,63 @@ workflow CNV_CORE {
     main:
     SUBSET_PAIR_VCF(joint_vcf_ch)
 
-    FILTER_VARIANTS(SUBSET_PAIR_VCF.out)
-    ITER_ISEC(FILTER_VARIANTS.out.combine(ref_dir_1000g))
-    HETVAR_FILTER(ITER_ISEC.out)
-    EAGLE_PHASING(HETVAR_FILTER.out.map { meta, het, _idx -> [ meta, het ] }.combine(ref_dir_1000g).combine(genetic_map))
-    INDEX_PHASED(EAGLE_PHASING.out)
+    // QUERY_HET_AD (and SUBSET_PAIR_VCF itself) name files by the VCF's own embedded
+    // sample columns, not meta.normal_sample_id/tumor_sample_id -- carried separately to
+    // AC_CALC, the one place that still needs them, rather than reshaping meta.
+    resolved_sample_ids_ch = SUBSET_PAIR_VCF.out
+        .map { meta, _vcf, _idx, normal_sm, tumor_sm -> [ meta, normal_sm, tumor_sm ] }
 
-    query_input = HETVAR_FILTER.out
-        .join(EAGLE_PHASING.out)
-        .join(INDEX_PHASED.out)
-        .map { meta, het, het_idx, phased, phased_idx ->
-            [ meta, het.find { it.name.contains('_chr1_') }, het, het_idx, phased, phased_idx ]
+    FILTER_VARIANTS(
+        SUBSET_PAIR_VCF.out.map { meta, vcf, vcf_index, _normal_sm, _tumor_sm -> [ meta, vcf, vcf_index ] }
+    )
+
+    // Scatter-gather for ITER_ISEC/EAGLE_PHASING (SPEC.md Sec14.1); HETVAR_FILTER/INDEX_PHASED stay single-task.
+    ITER_ISEC(
+        FILTER_VARIANTS.out.combine(ref_dir_1000g).combine(chrGroupChannel())
+    )
+
+    // groupTuple()+flatten() reassembles all shards' files into the flat list HETVAR_FILTER expects.
+    // normal_sm joined in so HETVAR_FILTER can resolve its sample column by name, not index.
+    HETVAR_FILTER(
+        ITER_ISEC.out.groupTuple()
+            .map { meta, vcf_lists, idx_lists -> [ meta, vcf_lists.flatten(), idx_lists.flatten() ] }
+            .join(resolved_sample_ids_ch.map { meta, normal_sm, _tumor_sm -> [ meta, normal_sm ] })
+    )
+
+    // EAGLE_PHASING needs no module change -- just route it a per-group subset by filename.
+    eagle_input = HETVAR_FILTER.out.combine(ref_dir_1000g).combine(genetic_map)
+        .combine(chrGroupChannel())
+        .map { meta, het_vcfs, het_vcf_indices, ref_dir, gmap, chr_group ->
+            def wanted = chr_group as Set
+            [
+                meta,
+                het_vcfs.findAll { wanted.contains(chrOf(it)) },
+                het_vcf_indices.findAll { wanted.contains(chrOf(it)) },
+                ref_dir,
+                gmap
+            ]
         }
+    EAGLE_PHASING(eagle_input)
+
+    // Gathered once, reused by both INDEX_PHASED and QUERY_HET_AD below.
+    eagle_phased_ch = EAGLE_PHASING.out.groupTuple()
+        .map { meta, phased_lists -> [ meta, phased_lists.flatten() ] }
+
+    INDEX_PHASED(eagle_phased_ch)
+
+    // QUERY_HET_AD derives its sample list from whichever het VCF it's handed first.
+    query_input = HETVAR_FILTER.out
+        .join(eagle_phased_ch)
+        .join(INDEX_PHASED.out)
     QUERY_HET_AD(query_input)
 
     AC_CALC(
         tumor_counts_ch
             .join(QUERY_HET_AD.out)
-            .map { meta, tumor_counts, hetinfo, ad, phased -> [ meta, tumor_counts, phased, ad, hetinfo ] }
+            .join(resolved_sample_ids_ch)
+            .map { meta, tumor_counts, hetinfo, ad, phased, normal_sm, tumor_sm ->
+                [ meta, tumor_counts, phased, ad, hetinfo, normal_sm, tumor_sm ]
+            }
     )
 
     TANGENT_XY(

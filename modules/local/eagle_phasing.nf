@@ -1,12 +1,12 @@
 process EAGLE_PHASING {
     tag "${meta.participant_id}"
     container 'docker.io/cbao/eagle@sha256:e837cf05d2821e2bd40d6e6f7dac9ef0a5c1575e744a0e7026d28bfac0cf3d66'
-    cpus 16
-    memory '128 GB'
-    disk '2000 GB'
+    cpus 8
+    memory '32 GB'
+    disk '100 GB'
 
     input:
-    tuple val(meta), path(het_vcfs), path(ref_dir_1000g), path(genetic_map)
+    tuple val(meta), path(het_vcfs), path(het_vcf_indices), path(ref_dir_1000g), path(genetic_map)
 
     output:
     tuple val(meta), path("*_het_eagle2phased.vcf.gz")

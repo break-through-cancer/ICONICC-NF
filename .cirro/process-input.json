@@ -1,4 +1,11 @@
 {
   "input": "$.dataset.s3|/config/manifest.csv",
-  "outdir": "$.dataset.dataPath"
+  "outdir": "$.dataset.dataPath",
+  "haplotypecaller_memory_gb": "$.dataset.params.haplotypecaller_memory_gb",
+  "publish_germline_gvcf": "$.dataset.params.publish_germline_gvcf",
+  "publish_joint_genotyped_vcf": "$.dataset.params.publish_joint_genotyped_vcf",
+  "read_counts_scatter_mode": "$.dataset.params.read_counts_scatter.read_counts_scatter_mode",
+  "read_counts_scatter_count": "$.dataset.params.read_counts_scatter.read_counts_scatter_count",
+  "cnv_scatter_mode": "$.dataset.params.cnv_scatter.cnv_scatter_mode",
+  "cnv_scatter_count": "$.dataset.params.cnv_scatter.cnv_scatter_count"
 }

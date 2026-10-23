@@ -5,6 +5,11 @@ Auto-discovers recalibrated CRAM/BAM + index pairs from the selected input datas
 (parabricks_bqsr's own output shape, preprocessing/recalibrated/<sample>/...), joins
 Cirro's own per-sample patient/sex/status metadata, and assembles the exact samplesheet
 subworkflows/local/samplesheet_to_pairs/main.nf expects. See SPEC.md §13.2.
+
+Real Cirro sample metadata does not always match the project's declared common-metadata
+schema: a patient identifier has been observed under both "patient" and "patient_id",
+and sex has been observed as both "male"/"female" and karyotype ("XX"/"XY"). Both
+variants are accepted -- see build_samplesheet below.
 """
 import re
 
@@ -64,8 +69,18 @@ def build_samplesheet(files, samplesheet: pd.DataFrame) -> pd.DataFrame:
             + ", ".join(missing)
         )
 
+    # Real Cirro sample records have been observed under both names: the project's
+    # common-metadata schema defines "patient", but samples carried over from a fastq
+    # ingestion samplesheet instead carry "patient_id". Accept either, preferring
+    # "patient" when both happen to be present.
+    patient_column = "patient" if "patient" in meta.columns else "patient_id"
+    if patient_column not in meta.columns:
+        raise ValueError(
+            "Cirro sample metadata has neither a 'patient' nor a 'patient_id' column"
+        )
+
     manifest = pairs.assign(
-        patient=pairs["sample"].map(meta["patient"]),
+        patient=pairs["sample"].map(meta[patient_column]),
         sex=pairs["sample"].map(meta["sex"]),
         status=pairs["sample"].map(meta["status"]),
     )
@@ -85,11 +100,15 @@ def build_samplesheet(files, samplesheet: pd.DataFrame) -> pd.DataFrame:
     manifest = manifest.assign(status=manifest["status"].astype(int))
 
     # Normalize sex -- SAMPLESHEET_TO_PAIRS accepts only the literal strings
-    # 'male'/'female' (not sarek's XX/XY), case-insensitively here for user tolerance.
-    manifest = manifest.assign(sex=manifest["sex"].astype(str).str.strip().str.lower())
+    # 'male'/'female'. Real Cirro sample metadata has been observed recording karyotype
+    # ('XX'/'XY') instead, so translate that convention too before validating.
+    sex_normalized = manifest["sex"].astype(str).str.strip().str.lower()
+    manifest = manifest.assign(sex=sex_normalized.replace({"xx": "female", "xy": "male"}))
     bad_sex = manifest.loc[~manifest["sex"].isin(["male", "female"]), "sample"].tolist()
     if bad_sex:
-        raise ValueError("sex must be 'male' or 'female' for: " + ", ".join(bad_sex))
+        raise ValueError(
+            "sex must be 'male'/'female' or 'XX'/'XY' for: " + ", ".join(bad_sex)
+        )
 
     # Mirror SAMPLESHEET_TO_PAIRS's pairing hard-errors exactly: >1 normal per patient,
     # a tumor whose patient has no normal, a sex mismatch within a pair.

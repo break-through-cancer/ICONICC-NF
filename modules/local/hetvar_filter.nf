@@ -5,17 +5,22 @@ process HETVAR_FILTER {
     memory '4 GB'
 
     input:
-    tuple val(meta), path(chr_vcfs), path(chr_vcf_indices)
+    tuple val(meta), path(chr_vcfs), path(chr_vcf_indices), val(normal_sm)
 
     output:
     tuple val(meta), path("*_het.vcf.gz"), path("*_het.vcf.gz.tbi")
 
     script:
+    // bcftools expressions only accept a numeric sample index, not a name -- resolve the
+    // normal sample's column position from each VCF's own header instead of assuming a
+    // fixed index, since nothing guarantees sample column order stays put upstream.
     """
     set -euo pipefail
     for chr in ${chr_vcfs}; do
       filename=\$(basename "\${chr}" "_var.vcf.gz")"_het.vcf.gz"
-      bcftools filter -i 'GT[1]="het" & FORMAT/AD[1:0]>=5 & FORMAT/AD[1:1]>=5' \\
+      normal_idx=\$(bcftools query -l "\${chr}" | grep -nxF '${normal_sm}' | cut -d: -f1)
+      normal_idx=\$((normal_idx - 1))
+      bcftools filter -i "GT[\${normal_idx}]=\\"het\\" & FORMAT/AD[\${normal_idx}:0]>=5 & FORMAT/AD[\${normal_idx}:1]>=5" \\
         "\${chr}" -O z -o "\${filename}"
       bcftools index --tbi "\${filename}"
     done

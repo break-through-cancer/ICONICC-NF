@@ -1,7 +1,101 @@
 {
   "form": {
     "type": "object",
-    "properties": {}
+    "properties": {
+      "haplotypecaller_memory_gb": {
+        "title": "HaplotypeCaller memory override (GB)",
+        "type": "integer",
+        "minimum": 16,
+        "maximum": 768,
+        "description": "Leave empty for the default (72 GB, doubling automatically on each OOM retry). For deep/high-coverage samples, set a higher starting value to avoid the first attempt failing."
+      },
+      "publish_germline_gvcf": {
+        "title": "Publish germline GVCF",
+        "type": "boolean",
+        "default": false,
+        "description": "Copy each sample's per-sample germline GVCF (HaplotypeCaller output) to the dataset's results/haplotypecaller/ folder. Off by default -- this is an intermediate already consumed internally by joint genotyping."
+      },
+      "publish_joint_genotyped_vcf": {
+        "title": "Publish joint-genotyped VCF",
+        "type": "boolean",
+        "default": true,
+        "description": "Copy each pair's final joint-genotyped, VQSR-filtered VCF to the dataset's results/joint_genotyped_vcf/ folder. On by default."
+      },
+      "read_counts_scatter": {
+        "title": "Read-counts scatter settings",
+        "type": "object",
+        "properties": {
+          "read_counts_scatter_mode": {
+            "title": "Read-counts scatter mode",
+            "type": "string",
+            "enum": ["groups", "per_chromosome"],
+            "default": "groups",
+            "description": "How COLLECT_READ_COUNTS is sharded per sample. 'groups' splits into a fixed shard count via GATK SplitIntervals, bounding job count for cohort-scale runs. 'per_chromosome' shards one-per-chromosome for maximum parallelism on a single-sample run."
+          }
+        },
+        "dependencies": {
+          "read_counts_scatter_mode": {
+            "oneOf": [
+              {
+                "properties": {
+                  "read_counts_scatter_mode": { "enum": ["groups"] },
+                  "read_counts_scatter_count": {
+                    "title": "Read-counts shard count",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "default": 8,
+                    "description": "Shards per sample."
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "read_counts_scatter_mode": { "enum": ["per_chromosome"] }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "cnv_scatter": {
+        "title": "CNV-chain scatter settings",
+        "type": "object",
+        "properties": {
+          "cnv_scatter_mode": {
+            "title": "CNV-chain scatter mode",
+            "type": "string",
+            "enum": ["groups", "per_chromosome"],
+            "default": "groups",
+            "description": "How ITER_ISEC/EAGLE_PHASING are sharded per tumor/normal pair. 'groups' round-robins chromosomes into a fixed shard count, bounding job count for cohort-scale runs. 'per_chromosome' shards one-per-chromosome for maximum parallelism on a single-pair run."
+          }
+        },
+        "dependencies": {
+          "cnv_scatter_mode": {
+            "oneOf": [
+              {
+                "properties": {
+                  "cnv_scatter_mode": { "enum": ["groups"] },
+                  "cnv_scatter_count": {
+                    "title": "CNV-chain shard count",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 23,
+                    "default": 4,
+                    "description": "Shards per tumor/normal pair."
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "cnv_scatter_mode": { "enum": ["per_chromosome"] }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
   },
   "ui": {}
 }

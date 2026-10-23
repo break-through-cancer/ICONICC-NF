@@ -58,7 +58,7 @@ option_list <- list(
               help = "Boolean indicating whether to check if an outlier region overlaps bins without heterozygous snps (defaults to false)"),
   make_option(c("-m", "--miss_thresh"), type = "double", default = 1.0,
               help = "Fraction of missing heterozygous snps in a segment to confirm outlier status. This value must be set if use_hetinfo is TRUE (defaults to 1)")
-  
+
 )
 
 opt_parser <- OptionParser(option_list = option_list)
@@ -108,7 +108,7 @@ generate_segments_wghts <- function(mat,df,wghts,smooth.reg=10,outlier.SD.sc=4,s
                  as.numeric(df$START),data.type = 'logratio', sampleid = case_id)
   smoothed.CNA <- smooth.CNA(CNA.mat,smooth.region =smooth.reg,outlier.SD.scale=outlier.SD.sc,smooth.SD.scale=smooth.SD.sc)
   segment.CNA <- segment(smoothed.CNA,weights = wghts,
-                         alpha=alp,min.width=min.wid,undo.splits=undo.spl,undo.prune=undo.pr,undo.SD=undo.SD) 
+                         alpha=alp,min.width=min.wid,undo.splits=undo.spl,undo.prune=undo.pr,undo.SD=undo.SD)
   segments <- as.data.table(segment.CNA[["output"]])
   segments <- segments[order(factor(chrom,levels=canonical_contigs),as.numeric(loc.start))]
   segments[,SegmentID:=1:nrow(segments)]
@@ -119,10 +119,10 @@ generate_segments_wghts <- function(mat,df,wghts,smooth.reg=10,outlier.SD.sc=4,s
 #Function to assign loci to defined segments from segmentation
 assign_group <- function(itter,dt,segments_CNA,seg.source){ #a function designed to assign a 'unique' group to a signal in the tumor space based on the ar_segments so we can aggregate on these groups
   #cat(itter,'\n')
-  row_c <- dt[itter,] 
-  chr <- row_c$CONTIG 
+  row_c <- dt[itter,]
+  chr <- row_c$CONTIG
   segments_info <- subset(segments_CNA,chrom==chr)
-  seg_group <- segments_info[which((as.numeric(row_c$START)>=loc.start)&(as.numeric(row_c$END)<=(loc.end+24999))),]$SegmentID
+  seg_group <- segments_info[which((as.numeric(row_c$START)>=loc.start)&(as.numeric(row_c$END)<=loc.end)),]$SegmentID
   if (identical(integer(0),seg_group)){
     seg_group <- NA
   }
@@ -180,7 +180,7 @@ generate_segments <- function(mat,df,smooth.reg=10,outlier.SD.sc=4,smooth.SD.sc=
                  as.numeric(df$START),data.type = 'logratio', sampleid = case_id)
   smoothed.CNA <- smooth.CNA(CNA.mat,smooth.region =smooth.reg,outlier.SD.scale=outlier.SD.sc,smooth.SD.scale=smooth.SD.sc)
   segment.CNA <- segment(smoothed.CNA,
-                         alpha=alp,min.width=min.wid,undo.splits=undo.spl,undo.prune=undo.pr,undo.SD=undo.SD) 
+                         alpha=alp,min.width=min.wid,undo.splits=undo.spl,undo.prune=undo.pr,undo.SD=undo.SD)
   segments <- as.data.table(segment.CNA[["output"]])
   segments <- segments[order(factor(chrom,levels=canonical_contigs),as.numeric(loc.start))]
   segments[,SegmentID:=1:nrow(segments)]
@@ -197,7 +197,7 @@ outlier_segments <- function(itter,segments.ar,full_dt,outlier_thresh){#check th
   ar.tan.overlap.i <- gr2dt(segments.tan.gr %&% segment.ar.i) #tangent segments that overlap the ar segment
   ar.tan.overlap.i[,perc_overlap := ifelse(start>=segment.i$loc.start&end<=segment.i$loc.end,1,((max(end,segment.i$loc.end)-min(start,segment.i$loc.start))-(abs(start-segment.i$loc.start)+abs(end-segment.i$loc.end)))/(end-start)),by='SegmentID']
   ar.tan.overlap.i <- ar.tan.overlap.i[perc_overlap>0.5]
-  
+
   if (nrow(ar.tan.overlap.i>=1)){ #if at least one overlap exists
     ar.mean <- segments.ar[itter,]$seg.mean
     ar.tan.overlap.i[,seg.sem:=sd(full_dt[tangent_segment==SegmentID,]$log2_tangent,na.rm=T)/sqrt(nrow(full_dt[tangent_segment==SegmentID,])),by='SegmentID'] #using the standard error of the mean rather than standard deviation
@@ -242,7 +242,7 @@ segments.ar <- generate_segments_wghts(ar.mat,full_dt[snp_count>5],wghts = as.nu
                                        smooth.reg=smooth_reg,outlier.SD.sc=outlier_SD_sc,
                                        smooth.SD.sc=smooth_SD_sc,alp=alp,min.wid=min_wid,undo.spl=undo_spl,
                                        undo.pr=undo_pr,undo.SD=undo_SD)
-
+segments.ar[,loc.end:=loc.end+24999] #first adjust the end locations of the segments
 rm(allelic_counts,allelic_counts_df) #cleanup
 
 full_dt <- full_dt[order(factor(CONTIG,levels = canonical_contigs),as.numeric(START))]
@@ -251,6 +251,55 @@ cts.mean.ar <- aggregate(full_dt$log2_tangent,by=list(full_dt$AR_segment),FUN = 
 colnames(cts.mean.ar) <- c('SegmentID','seg.mean')
 segments.ar <- merge(segments.ar[,!'seg.mean'],cts.mean.ar,by='SegmentID')
 
+#modify the AR segments to be adjacent
+segments.ar <- segments.ar %>%
+  group_by(chrom) %>%
+  mutate(loc.end=if_else(row_number()==n(),hg38$length[match(chrom,hg38$chrom)],loc.end)) %>%
+  ungroup()
+
+#First: adjust ends (forward-looking)
+segments.ar.adj <- segments.ar %>%
+  group_by(chrom) %>%
+  mutate(
+    next_start = lead(loc.start),
+    next_seg_mean = lead(seg.mean),
+    gap = next_start - loc.end,
+    midpoint = floor((gap - 1) / 2),
+    new_end = case_when(
+      !is.na(gap) & gap > 1 & abs(seg.mean) > abs(coalesce(next_seg_mean, 0))~ next_start - 1,
+      !is.na(gap) & gap > 1 & abs(seg.mean) == abs(coalesce(next_seg_mean, 0)) ~ loc.end + midpoint,
+      TRUE ~ loc.end
+    )
+  ) %>%
+  mutate(loc.end = new_end) %>%
+  select(-new_end, -next_start, -next_seg_mean, -gap, -midpoint) %>%
+  ungroup()
+
+# Second: adjust starts (backward-looking)
+segments.ar.adj <- segments.ar.adj %>%
+  group_by(chrom) %>%
+  mutate(
+    prev_end = lag(loc.end),
+    prev_seg_mean = lag(seg.mean),
+    gap = loc.start - prev_end,
+    new_start = case_when(
+      # Adjust only if there's a gap and current segment has stronger signal
+      !is.na(gap) & gap > 1 & abs(seg.mean) > abs(coalesce(prev_seg_mean, 0)) ~ prev_end + 1,
+
+      # Equal signal -> meet in the middle
+      !is.na(gap) & gap > 1 & abs(seg.mean) == abs(coalesce(prev_seg_mean, 0)) ~ prev_end + 1 + floor((gap - 1) / 2),
+
+      # Otherwise, leave loc.start unchanged
+      TRUE ~ loc.start
+    )
+
+  ) %>%
+  mutate(loc.start = new_start) %>%
+  select(-prev_end, -prev_seg_mean, -gap, -new_start) %>%
+  ungroup() %>%
+  as.data.table()
+
+segments.ar <- segments.ar.adj
 ar.plotdf <- rbindlist(lapply(1:nrow(segments.ar),get_segdf,segments.ar))
 
 ar_old <- ggplot(data=full_dt, aes(cum_start, log2_tangent)) +
@@ -275,9 +324,10 @@ if(is_male){
   segments.tan.stringent <- generate_segments(tan.mat,full_dt,smooth.reg=smooth_reg,outlier.SD.sc=outlier_SD_sc,
                                               smooth.SD.sc=smooth_SD_sc,alp=1e-3,min.wid=min_wid,undo.spl=undo_spl,
                                               undo.pr=undo_pr,undo.SD=undo_SD)
-  
+
   segments.tan <- rbind(segments.tan[!grepl('chrX',chrom),],segments.tan.stringent[chrom=='chrX'])
 }
+segments.tan[,loc.end:=loc.end+24999] #adjust the end locations of the segments
 segments.tan[,SegmentID:=1:nrow(segments.tan)]
 
 rm(ar.mat,tan.mat,tangent_norm) #cleanup
@@ -286,18 +336,17 @@ if (!run_recovery){ #end all analyses here
   #save the corrected version of segments.ar as the final segmentation output
   segfile <- paste0(case_id,".seg.txt")
   if(is_male){
-    #seg_file <- segments.ar[,SegmentID:=NULL]; segments.tan.stringent <- segments.tan.stringent[,SegmentID:=NULL]
     seg_file <- rbind(segments.ar[!grepl('chrX',chrom),],segments.tan.stringent[chrom=='chrX',])
     seg_file[,SegmentID:=1:nrow(seg_file)]
-    
+
     full_dt <- full_dt[order(factor(CONTIG,levels = canonical_contigs),as.numeric(START))]
     full_dt <- rbindlist(lapply(1:nrow(full_dt),assign_group,full_dt,seg_file,seg.source='AR'))
     cts.mean.ar <- aggregate(full_dt$log2_tangent,by=list(full_dt$AR_segment),FUN = function(x){return (mean(x,na.rm=T))})
     colnames(cts.mean.ar) <- c('SegmentID','seg.mean')
     seg_file <- merge(seg_file[,!'seg.mean'],cts.mean.ar,by='SegmentID')
-    
+
     ar.plotdf <- rbindlist(lapply(1:nrow(seg_file),get_segdf,seg_file))
-    
+
     ar_old <- ggplot(data=full_dt, aes(cum_start, log2_tangent)) +
       theme_classic()+
       ylim(-2,2) +ggtitle(paste0('AR segments\n',nrow(ar.plotdf),' Segments'))+
@@ -307,19 +356,19 @@ if (!run_recovery){ #end all analyses here
                    mapping = aes(x=x, y=y, xend=x.end, yend=y.end),
                    inherit.aes = FALSE,lwd=1,col='red')+
       theme(plot.title = element_text(hjust = 0.5)) +xlab("Start Position") + ylab("Segment Mean")
-    
+
     seg_file <- seg_file[,SegmentID:=NULL]
   }else{
-      seg_file <- segments.ar[,SegmentID:=NULL]
-    }
+    seg_file <- segments.ar[,SegmentID:=NULL]
+  }
   seg_file <- seg_file[order(factor(chrom,levels = canonical_contigs),as.numeric(loc.start))]
   write.table(seg_file, segfile, row.names = F,quote = F,col.names = T,sep = '\t')
-  
+
   requiredPlots <- paste0(case_id,'_segmentPlots.pdf')
   pdf(file=requiredPlots)
   print(ar_old)
   dev.off()
-  
+
   allelic_counts_file <- paste0(case_id,"_processed_counts.txt")
   accts_file <- full_dt[order(factor(CONTIG,levels = canonical_contigs),as.numeric(START))]
   write.table(accts_file, allelic_counts_file, row.names = F,quote = F,col.names = T,sep = '\t')
@@ -334,34 +383,34 @@ if(run_recovery){
                          loc.start > centromerEnd ~ 'q'))
   segments.tan <- as.data.table(segments.tan)
   segments.tan$centromerStart <- as.numeric(segments.tan$centromerStart);segments.tan$centromerEnd <- as.numeric(segments.tan$centromerEnd)
+
   #check if most of the arm (>30%) overlaps with the centromere, if so, call that a centromeric segment
   segments.tan[,arm_adj := ifelse(is.na(arm),ifelse((((max(centromerEnd,loc.end)-min(centromerStart,loc.start))-(abs(loc.start-centromerStart)+abs(loc.end-centromerEnd)))/(loc.end-loc.start))<=0.3,ifelse(loc.start<centromerStart,'p','q'),arm),arm),by='SegmentID']
   segments.tan[,chr_arm:= ifelse(!is.na(arm_adj),paste0(chrom,':',arm_adj),NA)]
-  
+
   full_dt <- full_dt[order(factor(CONTIG,levels = canonical_contigs),as.numeric(START))]
   full_dt <- rbindlist(lapply(1:nrow(full_dt),assign_group,full_dt,segments.tan,seg.source='tangent'))
-  
+
   segments.tan.gr <- dt2gr(segments.tan)
-  
+
   if(is_male){
     segments.ar.ref <- segments.ar[!grepl('chrX',chrom),] #if the sample is male, don't consider chrX for recovery
   }else{
     segments.ar.ref <- segments.ar
   }
-  
+
   segments.ar.ref <- na.omit(segments.ar.ref,cols="seg.mean") #lose any entries for which the seg.mean is NA; these were AR segments for which they were no tangent probes in the entire bin
   outlier.segments.annot <- rbindlist(lapply(1:nrow(segments.ar.ref),outlier_segments,segments.ar.ref,full_dt,outlier_thresh))
-  
+
   if(is_male){
     outlier.segments.annot<-rbind(outlier.segments.annot,gr2dt(segments.tan.gr)[seqnames=='chrX',],fill=T) #if the sample is male, bring back the chrX segments
     outlier.segments.annot[which(grepl('chrX',outlier.segments.annot$seqnames)), paste0(outlier_thresh,"SDR") := 'normal'] #changed to reflect new outlier thresholds
   }
-  
+
   #add the centromeric segments back and flag them as NA
-  outlier.segments.annot[which(is.na(chr_arm)),paste0(outlier_thresh,"SDR") := NA]
   outlier.segments.annot <- outlier.segments.annot[order(factor(seqnames,levels=canonical_contigs),start)]
   colnames(outlier.segments.annot)[1:3] <- c('chrom','loc.start','loc.end')
-  
+
   #get final set of outlier segments
   if(nrow(outlier.segments.annot)!=nrow(segments.tan)){
     cat('The following tangent segments did not overlap any AR segments and were not considered in recovery \n')
@@ -372,21 +421,20 @@ if(run_recovery){
     colnames(segments.tan.rem)[1:3] <- c('chrom','loc.start','loc.end')
     outlier.segments.annot <- rbind(outlier.segments.annot,segments.tan.rem,fill=T)
     outlier.segments.annot[which(SegmentID%in% rem_segments), paste0(outlier_thresh,"SDR") := 'normal']
-    outlier.segments.annot[which(is.na(chr_arm)),paste0(outlier_thresh,"SDR") := NA]
     outlier.segments.annot <- outlier.segments.annot[order(factor(chrom,levels=canonical_contigs),loc.start)]
   }
-  
+
   #generate tangent plots
   tan_plotdf <- rbindlist(lapply(1:nrow(segments.tan),get_segdf,segments.tan))
   outlier.colname <- paste0(outlier_thresh,'SDR')
   tan_plotdf[,outlier.class:=outlier.segments.annot[,..outlier.colname]]
-  tan_plotdf[,outlier.class:=ifelse(is.na(outlier.class),'centromeric',outlier.class)]
+  tan_plotdf[,chr_arm:= outlier.segments.annot[,chr_arm]]
+  tan_plotdf[,outlier.class:=ifelse(is.na(chr_arm),'centromeric',outlier.class)]
   outlier.class <- tan_plotdf$outlier.class
-  
-  tangent_plot <- ggplot(data=full_dt, aes(cum_start, log2_tangent)) + 
+
+  tangent_plot <- ggplot(data=full_dt, aes(cum_start, log2_tangent)) +
     theme_classic()+
     ylim(-2,2) +
-    #ggtitle(paste0('Outliers at ',outlier_thresh,'SDR(s) away from AR neighborhood mean'))+
     geom_rect(data=strip_data, aes(xmin=xmin,xmax=xmax, ymin=ymin, ymax=ymax,fill=fill),
               inherit.aes=F, alpha = 0.1,show.legend = F)+
     geom_segment(data = tan_plotdf,
@@ -395,15 +443,14 @@ if(run_recovery){
     theme(plot.title = element_text(hjust = 0.5)) +xlab("Start Position") + ylab("Segment Mean") +
     ggtitle(paste0('Tangent Segments: ',nrow(tan_plotdf),' Segments\n Outliers at ', outlier_thresh, ' SDR(s) from AR neighborhood mean annotated'))+
     guides(color = guide_legend(title = "Outlier Class")) +theme(legend.position = "none")
-  
-  
+
+
   #prepare outliers to recover
   outliers <- outlier.segments.annot[get(paste0(outlier_thresh,'SDR'))=='outlier'] #work with outliers at the set outlier threshold
-  outliers[,loc.end.adj:=loc.end+24999]
-  
+
   segments.ar[,seg_nature:='original']
   segments.ar$loc.start <- as.numeric(segments.ar$loc.start);segments.ar$loc.end <- as.numeric(segments.ar$loc.end)
-  
+
   outliers$loc.start <- as.numeric(outliers$loc.start);outliers$loc.end <- as.numeric(outliers$loc.end)
   if(nrow(outliers)>0){
     if (use_hetinfo){ #if overlapping outliers with missing locations
@@ -417,7 +464,7 @@ if(run_recovery){
       outliers.mod <- data.table(matrix(nrow = 1,ncol = ncol(outliers)+1));colnames(outliers.mod)=c(colnames(outliers),'is_seg_missing')
       for (i in 1:nrow(outliers)){
         row_l <- outliers[i,]
-        row_l_gr <- GRanges(row_l$chrom, IRanges(as.numeric(as.character(row_l$loc.start)), as.numeric(as.character(row_l$loc.end.adj))))
+        row_l_gr <- GRanges(row_l$chrom, IRanges(as.numeric(as.character(row_l$loc.start)), as.numeric(as.character(row_l$loc.end))))
         tangent_segid <- row_l$SegmentID
         perc_missing <- nrow(full_dt[(tangent_segment==tangent_segid) & !is.na(log2_tangent) & snp_count<5,])/nrow(full_dt[tangent_segment==tangent_segid & !is.na(log2_tangent),])
         is_seg_missing <- ifelse(perc_missing==miss_thresh,1,0)
@@ -426,10 +473,9 @@ if(run_recovery){
       }
       outliers <- outliers.mod[is_seg_missing==1,]
     }
-     #check again if outliers is empty or not
+    #check again if outliers is empty or not
     if (nrow(outliers)>0){
       for (i in 1:nrow(outliers)){
-        # cat(i,'\n')
         segment_i <- outliers[i,]
         segment_i[,seg_nature:='recovered']
         ref_GR <- makeGRangesFromDataFrame(segments.ar, keep.extra.columns = T,
@@ -446,11 +492,13 @@ if(run_recovery){
           seg_strt_id <- check_str_overlap@elementMetadata@listData$SegmentID
           mod_segment_strt <- ref_sub[which(SegmentID==seg_strt_id),] #the original segment that houses the start location of tangent seg
           if(mod_segment_strt$loc.start==segment_i$loc.start){ #if the start location exactly overlaps that of an existing segment, look at end
-            #modify the segment such that it's start location is 25kb from the end of segment_i to its original end
-            mod_segment_strt[,loc.start:=as.numeric(segment_i$loc.end)+25000]
+            #modify the segment such that it's start location is 1bp from the end of segment_i to its original end
+            mod_segment_strt[,loc.start:=as.numeric(segment_i$loc.end)+1]
           }else{ #if not overlapping, the other option is that the tangent segment start falls within an existing segment or right on the edge of one i.e., starts after
-            mod_segment_strt[,loc.end:=as.numeric(segment_i$loc.start)-25000] #then modify it such that it ends right before the start of tangent
+            mod_segment_strt[,loc.end:=as.numeric(segment_i$loc.start)-1] #then modify it such that it ends right before the start of tangent
           }
+          mod_segment_strt$seg.mean <- mean(full_dt[CONTIG==mod_segment_strt$chrom & as.numeric(START)>=mod_segment_strt$loc.start & as.numeric(END)<=mod_segment_strt$loc.end,]$log2_tangent,na.rm=T)
+          mod_segment_strt[,num.mark:=((loc.end-loc.start)%/%25000)+1] #approximate/assuming all bins from loc.end -> loc.start were taken
         }else{
           seg_strt_id <- integer(0)
           mod_segment_strt <- data.table(matrix(ncol = ncol(ref_sub),nrow=0));colnames(mod_segment_strt) <- colnames(ref_sub)
@@ -463,16 +511,18 @@ if(run_recovery){
           seg_end_id <- check_end_overlap@elementMetadata@listData$SegmentID
           mod_segment_end <- ref_sub[which(SegmentID==seg_end_id),]
           if(mod_segment_end$loc.end==segment_i$loc.end){ #if the ends overlap exactly
-            #modify the segment such that it's end location is 25kb inward from the start of segment_i
-            mod_segment_end[,loc.end:=as.numeric(segment_i$loc.start)-25000]
+            #modify the segment such that it's end location is 1bp inward from the start of segment_i
+            mod_segment_end[,loc.end:=as.numeric(segment_i$loc.start)-1]
           }else{
-            mod_segment_end[,loc.start:=as.numeric(segment_i$loc.end)+25000]
+            mod_segment_end[,loc.start:=as.numeric(segment_i$loc.end)+1]
           }
+          mod_segment_end$seg.mean <- mean(full_dt[CONTIG==mod_segment_end$chrom & as.numeric(START)>=mod_segment_end$loc.start & as.numeric(END)<=mod_segment_end$loc.end,]$log2_tangent,na.rm=T)
+          mod_segment_end[,num.mark:=((loc.end-loc.start)%/%25000)+1] #approximate/assuming all bins from loc.end -> loc.start were taken
         }else{
           seg_end_id <- integer(0)
           mod_segment_end <- data.table(matrix(ncol = ncol(ref_sub),nrow=0));colnames(mod_segment_end) <- colnames(ref_sub)
         }
-        #take the range of the recovered&original segments and remove all segments from the 
+        #take the range of the recovered&original segments and remove all segments from the
         #original segment profile whose start and end locations fall within this new range
         left_bound <- min(mod_segment_strt$loc.start,mod_segment_end$loc.start,segment_i$loc.start)
         right_bound <- max(mod_segment_strt$loc.end,mod_segment_end$loc.end,segment_i$loc.end)
@@ -489,37 +539,31 @@ if(run_recovery){
         segments.ar <- segments.ar[loc.end>loc.start,] #only retain segments that have reasonable start and end locations
         segments.ar <- unique(segments.ar,by=c('chrom','loc.start','loc.end'))
         segments.ar <- segments.ar[order(factor(chrom,levels = canonical_contigs),as.numeric(loc.start))]
-        segments.ar[,num.mark:=((loc.end-loc.start)%/%25000)+1] #approximate/assuming all bins from loc.end -> loc.start were taken
         segments.ar[,SegmentID:=1:nrow(segments.ar)]
       }
-    } 
+    }
   }else{
     segments.ar <- segments.ar
   }
-  
-  
-  full_dt <- full_dt[order(factor(CONTIG,levels = canonical_contigs),as.numeric(START))]
-  full_dt <- rbindlist(lapply(1:nrow(full_dt),assign_group,full_dt,segments.ar,seg.source='new_AR'))#allelic ratio
-  
-  cts.mean.ar <- aggregate(full_dt$log2_tangent,by=list(full_dt$new_AR_segment),FUN = function(x){return (mean(x,na.rm=T))})
-  colnames(cts.mean.ar) <- c('SegmentID','seg.mean')
-  segments.corrected <- merge(segments.ar[,!'seg.mean'],cts.mean.ar,by='SegmentID')
+
+
   if(is_male){
     X_segs <- segments.tan[chrom=='chrX'] %>%
-      select(any_of(colnames(segments.corrected)))
+      select(any_of(colnames(segments.ar)))
     X_segs[,seg_nature:='recovered'] #because for the male, we recover every segment from Tangent
-    segments.corrected <- rbind(segments.corrected[-which(chrom=='chrX'),],X_segs)
+    segments.ar <- rbind(segments.ar[-which(chrom=='chrX'),],X_segs)
   }
-  
+
   #save the corrected version of segments.ar as the final segmentation output
+  segments.ar <- segments.ar[,c('ID','chrom','loc.start','loc.end','num.mark','seg_nature','seg.mean')]
   segfile <- paste0(case_id,".seg.txt")
-  seg_file <- segments.corrected[,SegmentID:=NULL]
+  seg_file <- segments.ar[,SegmentID:=NULL]
   seg_file <- seg_file[order(factor(chrom,levels = canonical_contigs),as.numeric(loc.start))]
   write.table(seg_file, segfile, row.names = F,quote = F,col.names = T,sep = '\t')
-  
-  new.ar.plotdf <- rbindlist(lapply(1:nrow(segments.corrected),get_segdf,segments.corrected))
-  new.ar.plotdf <- cbind(new.ar.plotdf,segments.corrected[,'seg_nature'])
-  
+
+  new.ar.plotdf <- rbindlist(lapply(1:nrow(segments.ar),get_segdf,segments.ar))
+  new.ar.plotdf <- cbind(new.ar.plotdf,segments.ar[,'seg_nature'])
+
   #generate final ICONICC plot
   ar_new <- ggplot(data=full_dt, aes(cum_start, log2_tangent)) +
     theme_classic()+
@@ -531,7 +575,7 @@ if(run_recovery){
                  inherit.aes = FALSE,lwd=1)+scale_color_manual(values = c('recovered'='blue','original'='red'))+
     theme(plot.title = element_text(hjust = 0.5)) +xlab("Start Position") + ylab("Segment Mean")+
     guides(color = guide_legend(title = "Segment Identity")) +theme(legend.position = "none")
-  
+
   requiredPlots <- paste0(case_id,'_segmentPlots.pdf')
   pdf(file=requiredPlots,width = 16,height = 12)
   par(mar=c(2,2,0.5,0.5))
@@ -539,12 +583,12 @@ if(run_recovery){
                ncol = 1,nrow=3,widths=15,heights=c(4,4,4),
                left = 0, right = 0, padding = unit(0, "line"))
   dev.off()
-  
+
   allelic_counts_file <- paste0(case_id,"_processed_counts.txt")
   accts_file <- full_dt[order(factor(CONTIG,levels = canonical_contigs),as.numeric(START))]
   write.table(accts_file, allelic_counts_file, row.names = F,quote = F,col.names = T,sep = '\t')
-  
-  #store the number of segments generated due to each method. To be excluded in the final version
+
+  #store the number of segments generated due to each method. [To be excluded in the final version]
   seg_no <- matrix(data=c(nrow(tan_plotdf),nrow(ar.plotdf),nrow(new.ar.plotdf),nrow(segments.ar[seg_nature=='recovered',])),ncol = 4, nrow = 1,
                    dimnames = list(case_id,c('Tangent','Allelic Ratio','Allelic Ratio post-recovery','Recovered Segments')))
   segments_meth <- paste0(case_id,"_segment_cts.txt")

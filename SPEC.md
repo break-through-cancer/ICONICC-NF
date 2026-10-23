@@ -123,6 +123,32 @@ fragile.
 pair (see §5, sarek's joint-calling is cohort-wide, not pairwise) and pins the column
 order `hetvarFilter` needs, in one step. Do this before any other CNV-half processing.
 
+**Verified against two real Cirro runs**: the joint VCF's actual `#CHROM` sample columns
+are not the bare `normal_sample_id`/`tumor_sample_id`. `parabricks_bqsr` embeds each
+CRAM's read group as `SM:${patient}_${sample}`, which GenomicsDBImport/GenotypeGVCFs carry
+straight through — but the `patient` value used at alignment time is a separate, earlier
+input than whatever Cirro's own project metadata later records as that sample's patient,
+and the two are not guaranteed to agree (one real run embedded `<patient>_<sample>`;
+another, where the alignment samplesheet's `patient` column was left blank, embedded
+`<sample>_<sample>`). Rather than reconstruct the embedded name from samplesheet metadata,
+`SUBSET_PAIR_VCF` resolves it from the VCF itself — exact match, or a `_<id>` suffix —
+and hard-errors on anything but exactly one match per side.
+
+**Follow-up, confirmed shipped (2026-10-23)**: `SUBSET_PAIR_VCF` landed as planned, emitting
+`[normal, tumor]` column order via `bcftools view -s`. But `HETVAR_FILTER` itself was never
+updated off its original `GT[1]`/`FORMAT/AD[1:*]` indexing — which, against `[normal,
+tumor]` order, means index 1 is the *tumor* sample, not the normal one. The exact fragility
+this section called out, reintroduced one step later. Caught by comparing a completed WDL
+run against an NF run on the same input/samplesheet: chr10 (a classic GBM LOH chromosome)
+showed a 9.6x gap in post-`HETVAR_FILTER` het-site counts between the two pipelines, traced
+stage-by-stage back from `segment.R`'s output through `HaplotypeCaller` (identical calls),
+VQSR/`Filter` (identical), and `ITER_ISEC` (comparable) to isolate `HETVAR_FILTER` as the
+actual divergence point — filtering on tumor heterozygosity discards exactly the
+germline-het, tumor-LOH sites allelic-ratio CNV detection depends on. Fixed by having
+`HETVAR_FILTER` resolve the normal sample's column position from each VCF's own header at
+runtime (`bcftools query -l`, matched by the same resolved name `SUBSET_PAIR_VCF` exports),
+rather than trusting any particular column order to hold.
+
 ## 5. Joint genotyping — reuse sarek's subworkflow directly, not the top-level pipeline
 
 `nf-core/sarek`'s `subworkflows/local/bam_joint_calling_germline_gatk/main.nf`
@@ -245,6 +271,16 @@ static, unchanged:  tumor_sample_id, normal_sample_id, participant_id, sample_se
 
 Final outputs (from `ICONICC_paired.3.wdl`'s own `output{}` block, carry over unchanged):
 `read_depth`, `seg_file`, `ac_cts`, `segment_plots`, `segment_cts`.
+
+**Post-Phase-3 addition, beyond WDL parity**: each sample's indexed germline GVCF (from
+`INDEX_GVCF`) is also published. The original WDL never published per-sample GVCFs at
+all, so this isn't restoring prior behavior — it's a deliberate new output, since
+`PARABRICKS_HAPLOTYPECALLER` already runs in standard `--gvcf` mode (same GQ confidence
+bands and GATK annotation groups any GATK joint-genotyping pipeline expects) and the
+GVCF was otherwise only ever a discarded intermediate. Published from `INDEX_GVCF`, not
+`PARABRICKS_HAPLOTYPECALLER` directly, since `INDEX_GVCF` re-emits the GVCF alongside its
+own freshly-built `.tbi` — publishing from the earlier process too would copy the
+identical file into `results/` twice under two different directory names.
 
 ## 7. Container/version notes — resolved
 
@@ -512,8 +548,10 @@ Composes vendored nf-core modules directly — `GATK4_GENOMICSDBIMPORT`,
 subworkflow as a black box (decision log below explains why). Chain, per pair:
 
 ```
-GenomicsDBImport(normal_gvcf, tumor_gvcf, calling_intervals)
-  → GenotypeGVCFs                                     (one call, whole calling_intervals region)
+SplitIntervals(calling_intervals)                      (§12.6: scattered 2026-10-22)
+  → GenomicsDBImport(normal_gvcf, tumor_gvcf, shard) ┐  (one call per shard)
+  → GenotypeGVCFs(shard)                             ┘  (one call per shard)
+  → GatherGenotypedVcf                                  (bcftools concat + sort, per pair)
   → VariantFiltration  --filter-expression "ExcessHet > 54.69" --filter-name ExcessHet
   → MakeSitesOnlyVcf                                   (training input only, not the final VCF)
   → VariantRecalibrator(SNP, on sites-only)  ┐
@@ -542,10 +580,13 @@ dropped), and `MakeSitesOnlyVcf`'s output is used only as `VariantRecalibrator`'
 input, per the WDL. `ext.args`/tranche overrides for `VariantRecalibrator`/`ApplyVQSR`
 (SNP/INDEL) are exactly §5.1's already-resolved values — no new decision needed there.
 
-No `BCFTOOLS_SORT`/`MergeVcfs` step: those exist in sarek's subworkflow purely to
-reassemble interval-scattered shards, and per the no-scatter decision below,
-`GenotypeGVCFs` runs once per pair over the whole `calling_intervals` region and already
-emits one complete, sorted VCF.
+`GenomicsDBImport`/`GenotypeGVCFs` are interval-scattered (§12.6, reversed 2026-10-22,
+reusing `SAMPLE_READ_COUNTS`'s own `SPLIT_INTERVALS` pattern), with a local
+`GATHER_GENOTYPED_VCF` module (bcftools concat + sort — not sarek's `BCFTOOLS_SORT`/
+`MergeVcfs`, matching this repo's own small local-bcftools-module convention instead)
+reassembling the per-shard VCFs into one genome-wide VCF immediately afterward.
+`VariantFiltration` onward still runs once per pair over the whole genome, unscattered —
+VQSR needs genome-wide site statistics.
 
 **Exact `ext.args`/resource values** — read directly from `ICONICC_paired.3.wdl`'s own
 input-block defaults (lines 56-59) and confirmed unoverridden in the production Cirro
@@ -622,14 +663,30 @@ manifest with no purpose once scatter is dropped.
 
 ### 12.6 Decision log
 
-**Interval scatter — dropped for v1.** The WDL scatters `HaplotypeCaller` and
-`GenotypeGVCFs`/VQSR across ~50 interval shards, a CPU-parallelism trick from the original
-Broad WGS-joint-calling template. Parabricks HaplotypeCaller already processes the whole
-genome in one GPU job — the reason for that scatter disappears on the calling side — and
-this pipeline runs one patient's two samples per invocation, never a cohort, so
-joint-genotyping's scatter buys little either. **Resolved (confirmed with the dev)**: run
-each stage as a single whole-genome job per pair. This is why §12.3's chain has no
-`BCFTOOLS_SORT`/merge step and why `JOINT_GENOTYPING` needs no `num_intervals` bookkeeping.
+**Interval scatter — dropped for v1, then reinstated for `GenomicsDBImport`/`GenotypeGVCFs`
+(2026-10-22).** The WDL scatters `HaplotypeCaller` and `GenotypeGVCFs`/VQSR across ~50
+interval shards, a CPU-parallelism trick from the original Broad WGS-joint-calling template.
+Parabricks HaplotypeCaller already processes the whole genome in one GPU job — the reason
+for that scatter disappears on the calling side — and this pipeline runs one patient's two
+samples per invocation, never a cohort, so joint-genotyping's scatter buys little either.
+**Originally resolved (confirmed with the dev)**: run each stage as a single whole-genome job
+per pair. This is why §12.3's chain had no `BCFTOOLS_SORT`/merge step and why
+`JOINT_GENOTYPING` needed no `num_intervals` bookkeeping.
+
+That assumption was made before any real Parabricks/GATK execution existed to check it
+against (§12.7 listed this as an accepted gap at the time). A real Cirro run subsequently
+showed `GATK4_GENOMICSDBIMPORT` (108 min) and `GATK4_GENOTYPEGVCFS` (138 min) running
+serially for 246 minutes — about 40% of the entire pipeline's ~10.2-hour critical path — for
+a single tumor/normal pair, directly contradicting "buys little." **Re-resolved**: scatter
+just these two steps by interval, reusing `SAMPLE_READ_COUNTS`'s own `SPLIT_INTERVALS`/gather
+pattern (`params.joint_genotyping_scatter_mode`/`_count`, `nextflow.config`) rather than
+building new scatter infrastructure, with a new `GATHER_GENOTYPED_VCF` module (bcftools
+concat + sort, matching this repo's other local bcftools modules) reassembling the per-shard
+VCFs into one genome-wide VCF before `VARIANT_FILTRATION`. `VARIANT_FILTRATION` onward
+(including both `GATK4_VARIANTRECALIBRATOR`/`GATK4_APPLYVQSR` calls) stays a single
+whole-genome job per pair — VQSR's Gaussian mixture model needs genome-wide site statistics,
+so it cannot be scattered the same way, and that part of the original no-scatter reasoning
+still holds.
 
 **Joint-genotyping integration — vendor sarek's modules, write our own orchestration, not
 sarek's subworkflow.** Three approaches were weighed: (A) fork sarek's
@@ -658,6 +715,35 @@ vendored GATK4 module's container to 4.2.6.1 via `nextflow.config`, matching the
 exactly and keeping one GATK version across the whole pipeline (consistent with §7's
 CNV-half resolution). The dev flagged this as provisional — a candidate for an org-wide
 GATK version bump later, revisited outside this port's scope.
+
+**GPU-accelerated joint genotyping — deferred, not rejected; re-evaluated 2026-10-22,
+still deferred.** Parabricks 4.7 has its own `genotypegvcf` tool (GPU-accelerated
+`GenotypeGVCFs` equivalent), but it is not a drop-in swap for `GATK4_GENOTYPEGVCFS` alone:
+a real NVIDIA forum report says `pbrun genotypegvcf` does not work against a workspace
+built by GATK's own `GenomicsDBImport`, so using it would mean swapping the whole
+`GATK4_GENOMICSDBIMPORT`→`GATK4_GENOTYPEGVCFS` chain for Parabricks' own
+GenomicsDB-building tools (`creategenomicsdb`→`importgvcftodb`→`selectvariants`→
+`genotypegvcf`), not just one container. Same GenomicsDB-workspace-merge coupling already
+noted above for interval scatter.
+
+Re-evaluated once the interval-scatter fix above shipped and actually targeted the
+measured 246-minute cost directly: every NVIDIA benchmark for Parabricks' GPU tools (the
+"30x WGS in 25 min," "25,000 genomes/year" figures) is for the single-sample germline
+caller this pipeline already runs on GPU (`PARABRICKS_HAPLOTYPECALLER`) — none exist for
+the joint-genotyping/population chain specifically, at any cohort size. Parabricks' own
+docs consistently frame that chain around large cohorts (10s to 1000s of samples); this
+pipeline's actual workload is one normal plus typically 1-2 tumor samples per run, a
+scale where GATK's GenomicsDBImport/GenotypeGVCFs (what sarek and the Broad ecosystem
+already use at this scale) is the standard choice, not a known bottleneck Parabricks is
+documented to fix. The integration cost also didn't shrink: a new 4-tool chain to wire
+and test, an unverified (not confirmed compatible or incompatible) risk that
+`genotypegvcf`'s output matches what `VARIANTRECALIBRATOR_SNP`/`_INDEL` and
+`APPLYVQSR_INDEL`/`_SNP` need — the one part of this chain that stays unscattered and is
+load-bearing for final output correctness — and a second GPU-requiring stage added to a
+pipeline whose GPU/CPU split is otherwise a deliberate architectural choice (`.cirro/
+process-compute.config` scopes GPU scheduling to `PARABRICKS_HAPLOTYPECALLER` only,
+§12.7). Stays deferred: worth revisiting only if this pipeline's usage pattern moves to
+genuinely large cohorts, not a quick win at today's scale.
 
 ### 12.7 Testing & accepted gaps
 
@@ -723,9 +809,14 @@ rather than designed blind. Two Cirro-native building blocks it draws on:
   is the shape this code assumes, not an index Cirro hands over pre-set. Already uses
   `patient`/`sex`/`status` as literal column names in the existing `sarek_call_variants`
   precedent — the exact three columns `SAMPLESHEET_TO_PAIRS` needs beyond `cram`/`crai`.
-  **Unverified**: there is no way to confirm `ds.samplesheet`'s exact column/index shape
-  without real Cirro access, which isn't available in this environment; confirm this
-  assumption at the first real Cirro launch.
+  **Verified against a real failed Cirro launch**: `sample` does arrive as an ordinary
+  column as assumed, but the other column names are not reliable. The project's own
+  declared common-metadata schema does define `patient` — but a sample whose metadata was
+  carried over from a fastq-ingestion samplesheet instead exposes `patient_id`, and the
+  first real launch failed on exactly that (`KeyError: 'patient'`). Separately, `sex` has
+  been observed recorded as karyotype (`XX`/`XY`), not literal `male`/`female`.
+  `preprocess.py` now accepts both column names (preferring `patient` when both are
+  present) and maps `XX`/`XY` to `female`/`male` before validating.
 
 `preprocess.py`'s job: join the two into `SAMPLESHEET_TO_PAIRS`'s exact CSV shape
 (`patient,sample,sex,status,cram,crai`), write it out, and point `--input` at it via
@@ -818,3 +909,163 @@ as a follow-up, not silently assumed to happen automatically.
   matching `parabricks_bqsr`'s own real, current pattern — not the older
   instance-family-based approach §2 originally cited, which this org has since moved
   past. Accelerator count may be revisited later; not treated as final here.
+
+## 14. Scatter-gather for read-counting and the CNV per-chromosome chain (real-world finding, post-Phase-3)
+
+A real (non-toy) tumor/normal pair pushed `COLLECT_READ_COUNTS`'s single
+whole-genome GATK call into an estimated tens-of-hours wall-clock, confirmed against
+Broad's own official GATK CNV WDL pipeline and the original ICONICC WDL
+(`ICON_Tasks.2.wdl`/`ICONICC_paired.3.wdl`) both doing the same one-call-per-sample,
+no-scatter thing this pipeline already did — i.e. this is a genuine new enhancement
+beyond any prior version of this pipeline, not catching up to a known pattern.
+
+### 14.1 What's scattered, what isn't
+
+- **`SAMPLE_READ_COUNTS`** (`COLLECT_READ_COUNTS`): scattered. Implemented in Phase 3.
+- **`ITER_ISEC`/`EAGLE_PHASING`**: scattered, by the same `cnv_scatter_mode`/
+  `cnv_scatter_count` chromosome groups (reused across both, so shard boundaries match —
+  see `buildChrGroups()` in `subworkflows/local/cnv_core/main.nf`). `EAGLE_PHASING`
+  (`cpus 16, memory 128 GB, disk 2000 GB`, run 23x sequentially per pair before this) was
+  the highest-value target in this chain. `ITER_ISEC` needed a module change (its
+  chromosome loop was hardcoded; now takes the shard's chromosome list as a `val` input).
+  `EAGLE_PHASING` needed none — it already loops over whatever het VCFs it's handed and
+  derives each chromosome from the filename, so scattering it is a pure channel-wiring
+  change in `cnv_core/main.nf` (subset `HETVAR_FILTER`'s gathered output by filename
+  before each shard).
+- **`HETVAR_FILTER`/`INDEX_PHASED`**: deliberately NOT scattered. Real timing on a
+  production tumor/normal pair's full 23-chromosome sequential loop: `ITER_ISEC` 63.7
+  min, `HETVAR_FILTER` 3.8 min, `EAGLE_PHASING` 65.7 min, `INDEX_PHASED` 0.8 min — the two
+  fast steps stay single-task, gathering `ITER_ISEC`'s/`EAGLE_PHASING`'s shard outputs
+  back into one full-chromosome-set list first, since per-task scatter overhead would
+  likely cost more than splitting ~4-minute (or ~1-minute) steps would save.
+- **Joint-genotyping chain** (`GenomicsDBImport`/`GenotypeGVCFs`): scattered as of
+  2026-10-22 — §12.6 documents the reversal of this section's original "not reopened
+  here" call, once real timing data showed these two steps costing 246 minutes serially
+  (~40% of the whole critical path) for a single pair. `VariantFiltration` onward is
+  still a single whole-genome call per pair (VQSR needs genome-wide site statistics).
+- **`PARABRICKS_HAPLOTYPECALLER`**: not a scatter candidate — already GPU-accelerated
+  (parallel in hardware), and scattering it would add a GVCF-merge step upstream of the
+  already-settled joint-genotyping decision for comparatively little gain.
+
+### 14.2 Sharding modes — two, mutually exclusive, not a single fixed granularity
+
+- **`groups`** (default): `SPLIT_INTERVALS` runs GATK's own `SplitIntervals
+  --scatter-count N` against the *unrestricted* interval list (alt/decoy/unplaced
+  contigs included, same as today's output — GATK's own size-balanced splitting
+  algorithm already bundles the mass of small contigs sensibly with no special-casing
+  needed). Bounds job count for cohort-scale runs: total jobs scale with
+  `samples × N`, not `samples × every contig in the reference`.
+- **`per_chromosome`**: one shard per `params.scatter_chromosomes` entry (hg38 default:
+  chr1-22 + X — the same chromosome universe the phasing panel, `ref_dir_1000g`, is
+  built around). Restricted to that list deliberately: alt/decoy/unplaced contigs don't
+  have a sensible standalone per-chromosome identity, and nothing downstream
+  (`TANGENT_XY`, `segment.R`) reads bins from non-primary contigs anyway. This is the
+  only one of the two modes where output scope narrows relative to today's behavior,
+  and it only does so when a run explicitly opts into this mode.
+- Why not GATK's `CreateSequenceGroupingTSV` pattern (Broad's own WARP preprocessing
+  convention) directly: it does the same size-balanced-not-type-separated grouping
+  `SplitIntervals --scatter-count N` already gives for free, so there was nothing to
+  gain by reimplementing it by hand.
+- `params.scatter_chromosomes` is the reusable, species-overridable chromosome universe
+  for both this and the CNV-chain scatter (`cnv_scatter_mode`/`cnv_scatter_count`) —
+  overriding it is also most of what canine support needs for the hardcoded
+  `{1..22} X` loops documented in `iconicc-nf-canine-expansion.md`.
+- The CNV chain's `cnv_scatter_mode`/`cnv_scatter_count` follow the same two-mode naming
+  convention but partition whole chromosome *names* directly, with no GATK call: there's
+  no genomic interval to split, just a list of discrete chromosome identifiers.
+  `per_chromosome` is one shard per entry, same as above. `groups` round-robins
+  `scatter_chromosomes` into `cnv_scatter_count` shards by list index (`buildChrGroups()`
+  in `subworkflows/local/cnv_core/main.nf`) rather than running `SplitIntervals` —
+  `scatter_chromosomes` is already ordered largest-to-smallest (autosomes, then X), so
+  interleaving by index balances shard sizes without needing interval-size data.
+
+### 14.3 Failure semantics — sequenced deliberately, not "do it all at once"
+
+Per-shard retry is a free side effect of scattering (`task.attempt`, same
+`memory = { base * task.attempt }` mechanism `PARABRICKS_HAPLOTYPECALLER`'s own OOM
+retries already use). What happens after retries are exhausted is a
+separate, explicitly sequenced decision:
+
+1. **This phase**: a shard that still fails after retries hard-fails the whole run, with
+   diagnostics that name the specific failing chromosome/group (each shard's own log
+   still shows exactly which `bcftools`/`eagle` invocation broke, same as today).
+2. **Deferred, not rejected**: graceful per-chromosome exclusion (retry, then continue
+   with a visibly-marked gap — blank value, explicit FAIL marker, or a rendered gap in
+   the R scripts' PDF plots — rather than failing the whole run) was discussed and is a
+   real, philosophy-compatible idea (visible exclusion, not silent), but requires real
+   new work beyond scattering itself: Nextflow's `errorStrategy='ignore'` doesn't
+   synthesize a placeholder, so the gather step would need to explicitly reconcile
+   "chromosomes received" against "chromosomes expected" and manufacture one, and
+   `bin/ac_calc.R`/`bin/tangent.R`/`bin/segment.R` (vendored in this repo) would need new
+   NA-handling and new plotting logic, not just tolerance. Deferred until there's real
+   evidence of how often genuine per-chromosome failures occur on production-coverage
+   data — on today's 0.1x toy data a dropout was expected and benign (the `EAGLE_PHASING`
+   `M=0`-matching-SNPs case); on real coverage it's a much rarer, more meaningful signal
+   (something is genuinely wrong with that chromosome for that sample) that's worth
+   surfacing loudly rather than engineering around speculatively.
+
+### 14.4 Job-count-at-scale mitigations
+
+Scattering multiplies job count per sample by however many shards are configured,
+and `PW_ONDEMAND_JOB_QUEUE` is shared across every pipeline in this Cirro project, not
+exclusive to this one. Mitigations landed alongside the scatter itself, not bolted on
+after the fact:
+
+- `executor.queueSize`/`executor.submitRateLimit` set explicitly in `nextflow.config`
+  (AWS Batch's own Nextflow executor default is `queueSize=1000` with no submission
+  throttling — exactly the kind of bursty, unbounded submission pattern that caused
+  real prior AWS Batch problems independent of this pipeline).
+- The `groups` mode's tunable `N` is the primary lever for bounding total job count at
+  cohort scale — pick a small `N` for a large multi-patient run, a larger one (or
+  `per_chromosome`) for a single-sample validation run where job count isn't the
+  concern.
+- `EAGLE_PHASING`'s image (`docker.io/cbao/eagle`) is on Docker Hub, not GHCR — a real
+  rate-limit exposure once many shards across many samples pull it concurrently from
+  cold instances. Mirroring it to `ghcr.io/break-through-cancer/...` (same pattern as
+  `iconicc-cnv-r`) is planned alongside the CNV-chain scatter, not yet done.
+
+### 14.5 Tuning review after the joint-genotyping scatter (2026-10-22)
+
+Adding `JOINT_GENOTYPING`'s own scatter (§12.6) raises this pipeline's total job-count
+ceiling further, so three related settings were reviewed together rather than left as
+leftover defaults from before that change existed.
+
+**`cnv_scatter_count`: raised 4 → 8.** The original 4 had no numeric derivation anywhere
+(no comment, commit, or measurement ties it to overhead, provisioning data, or queue
+capacity — it was set by analogy to half of `read_counts_scatter_count`, nothing more).
+Raised to match `read_counts_scatter_count`/`joint_genotyping_scatter_count` now that
+`EAGLE_PHASING`'s resource request is smaller (`cpus 16 → 8, memory 128 → 32 GB, disk
+2000 → 100 GB`, `modules/local/eagle_phasing.nf`) — a smaller, more-numerous request is
+exactly the case that benefits most from more shards, per the same provisioning-overhead
+finding that motivated the resource fix. No test asserts this value. Like the
+joint-genotyping scatter count itself, this is a default pending confirmation against a
+real run (§12.6), not a measured optimum.
+
+**`executor.queueSize`/`submitRateLimit`: left unchanged.** Worked the dataflow math: a
+single pair's peak concurrent AWS Batch job count is roughly 18 (2
+`PARABRICKS_HAPLOTYPECALLER` + `read_counts_scatter_count × 2 samples` = 16
+`COLLECT_READ_COUNTS`, an independent branch not gated on germline calling) to ~26 if
+`JOINT_GENOTYPING`'s 8 shards start before read-counts finishes; `CNV_CORE` adds up to
+`cnv_scatter_count` (now 8) concurrent jobs per stage, sequentially (`ITER_ISEC` then
+`EAGLE_PHASING`, not both at once). Pairs run fully concurrently with each other (no
+serialization barrier anywhere in `main.nf`'s channel topology), so a multi-tumor patient
+multiplies this roughly linearly by pair count. For the committed 2-tumor test fixture
+this is comfortably under `queueSize=100`; a patient with several more tumor samples
+could approach it. Left unchanged regardless: `queueSize`/`submitRateLimit` are an
+explicit shared-resource throttle (`PW_ONDEMAND_JOB_QUEUE` is shared across every
+pipeline in this Cirro project, §14.4) protecting other pipelines on that queue, not a
+capacity ceiling tuned to this pipeline's own job count — raising it is an
+infrastructure-sharing tradeoff this pipeline's own config shouldn't make unilaterally
+without evidence of actual contention. Revisit if a real run shows AWS Batch throttling
+or submission backpressure, not preemptively.
+
+**`GATK4_GENOMICSDBIMPORT`/`GATK4_GENOTYPEGVCFS` memory (`6 * task.attempt` GB): left
+unchanged.** This value is sarek's generic `process_single` default (see the resource
+sizing comment above `withName: 'GATK4_GENOMICSDBIMPORT'` in `nextflow.config`), never
+validated against this pipeline's own data in either direction — unlike `PARABRICKS_HAPLOTYPECALLER`, which has a documented real OOM
+at a fixed 72 GB. No comment, commit, or test ties it to either the old whole-genome call
+or the new per-shard call specifically. Left as-is rather than guessed at in either
+direction: lowering it without evidence risks more `task.attempt` OOM-retry cycles per
+shard now that there are more shards to retry; raising it without evidence spends more
+of the shared queue's memory budget than a small (2-sample) GATK call may need. Revisit
+once a real scattered run gives actual per-shard memory data.

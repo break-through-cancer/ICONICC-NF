@@ -11,7 +11,8 @@ nextflow_process {
                     [participant_id: 'TEST_PT'],
                     file("${projectDir}/tests/fixtures/cnv_core/HC_var.vcf.gz"),
                     file("${projectDir}/tests/fixtures/cnv_core/HC_var.vcf.gz.tbi"),
-                    file(params.ref_dir_1000g)
+                    file(params.ref_dir_1000g),
+                    params.scatter_chromosomes
                 ]
                 """
             }
@@ -19,6 +20,27 @@ nextflow_process {
         then {
             assert process.success
             assert process.out[0].get(0)[1].size() == 23  // chr1-22 + chrX
+        }
+    }
+
+    test("a shard only produces its own chr_group's VCFs") {
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT'],
+                    file("${projectDir}/tests/fixtures/cnv_core/HC_var.vcf.gz"),
+                    file("${projectDir}/tests/fixtures/cnv_core/HC_var.vcf.gz.tbi"),
+                    file(params.ref_dir_1000g),
+                    ['1', '2', 'X']
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            assert process.out[0].get(0)[1].size() == 3
+            assert process.out[0].get(0)[1].every { it.name ==~ /.*_chr(1|2|X)_var\.vcf\.gz/ }
         }
     }
 }

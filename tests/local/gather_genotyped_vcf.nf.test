@@ -1,0 +1,79 @@
+nextflow_process {
+    name "Test gather_genotyped_vcf"
+    script "modules/local/gather_genotyped_vcf.nf"
+    process "GATHER_GENOTYPED_VCF"
+
+    test("merges shards in header contig order, not arrival or alphabetical order") {
+        when {
+            process {
+                """
+                // chr10's shard is listed FIRST here, deliberately, to prove the merge
+                // sorts by the shared header's own contig order (chr1, chr2, chr10) rather
+                // than trusting input order or falling into the chr10-before-chr2
+                // alphabetical trap (same convention as GATHER_READ_COUNTS's own test).
+                input[0] = [
+                    [ participant_id: 'TEST_TUMOR_vs_TEST_NORMAL' ],
+                    [
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardB_chr10.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardA_chr2.vcf.gz")
+                    ],
+                    [
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardB_chr10.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardA_chr2.vcf.gz.tbi")
+                    ]
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            def vcf_path = path(process.out[0].get(0)[1])
+            def records = vcf_path.linesGzip.findAll { !it.startsWith('#') }
+            assert records == [
+                'chr2\t1000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1',
+                'chr2\t2000\t.\tC\tT\t50\tPASS\t.\tGT\t0/1',
+                'chr10\t500\t.\tG\tA\t50\tPASS\t.\tGT\t0/1',
+            ]
+        }
+    }
+
+    test("merges shards where the same chromosome appears in two non-adjacent shards") {
+        // Real-run regression (ICONICC-NF feat/scatter-gather-read-counts-and-cnv-chain,
+        // 2026-10-22): SPLIT_INTERVALS's 'groups' mode can bin-pack the same chromosome's
+        // intervals across more than one shard to balance total size, so chr11 ends up
+        // split between shardX and shardZ here with an unrelated chromosome's shard
+        // (shardY) between them in shard order. Plain `bcftools concat` refuses this
+        // ("chromosome block ... is not contiguous") even though the final `bcftools sort`
+        // would fix the ordering regardless -- --allow-overlaps is required so concat
+        // itself doesn't reject the input before sort ever runs.
+        when {
+            process {
+                """
+                input[0] = [
+                    [ participant_id: 'TEST_TUMOR_vs_TEST_NORMAL' ],
+                    [
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardX_chr11a.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardY_chr5.vcf.gz"),
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardZ_chr11b.vcf.gz")
+                    ],
+                    [
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardX_chr11a.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardY_chr5.vcf.gz.tbi"),
+                        file("\${projectDir}/tests/fixtures/gather_genotyped_vcf/shardZ_chr11b.vcf.gz.tbi")
+                    ]
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            def vcf_path = path(process.out[0].get(0)[1])
+            def records = vcf_path.linesGzip.findAll { !it.startsWith('#') }
+            assert records == [
+                'chr5\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1',
+                'chr11\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1',
+                'chr11\t200\t.\tA\tG\t50\tPASS\t.\tGT\t0/1',
+            ]
+        }
+    }
+}

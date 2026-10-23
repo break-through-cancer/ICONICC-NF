@@ -3,14 +3,17 @@ nextflow_process {
     script "modules/local/hetvar_filter.nf"
     process "HETVAR_FILTER"
 
-    test("keeps only tumor-het sites with adequate depth") {
+    test("keeps only normal-het sites with adequate depth") {
         when {
             process {
                 """
                 input[0] = [
                     [participant_id: 'TEST_PT'],
-                    files("${projectDir}/tests/fixtures/cnv_core/chr_outputs/*_var.vcf.gz"),
-                    files("${projectDir}/tests/fixtures/cnv_core/chr_outputs/*_var.vcf.gz.tbi")
+                    files("\${projectDir}/tests/fixtures/cnv_core/chr_outputs/*_var.vcf.gz"),
+                    files("\${projectDir}/tests/fixtures/cnv_core/chr_outputs/*_var.vcf.gz.tbi"),
+                    // SUBSET_PAIR_VCF always orders samples [normal, tumor], so the real
+                    // fixture's first column is the normal sample -- see tests/fixtures/cnv_core/README.md.
+                    params.fixture_normal_id
                 ]
                 """
             }
@@ -18,6 +21,34 @@ nextflow_process {
         then {
             assert process.success
             assert process.out[0].get(0)[1].size() == 23
+        }
+    }
+
+    test("resolves the normal sample by name, not column position") {
+        // Regression test: HETVAR_FILTER used to hardcode GT[1]/AD[1:*], assuming the
+        // normal sample was always the second VCF column. This fixture deliberately
+        // reverses that (normal first) to prove the fix resolves by name instead --
+        // confirmed by real data where it silently filtered on the tumor's
+        // heterozygosity instead of the normal's.
+        when {
+            process {
+                """
+                input[0] = [
+                    [participant_id: 'TEST_PT'],
+                    [file("\${projectDir}/tests/fixtures/hetvar_filter/TEST_PT_chr1_var.vcf.gz")],
+                    [file("\${projectDir}/tests/fixtures/hetvar_filter/TEST_PT_chr1_var.vcf.gz.tbi")],
+                    'SAMPLE_NORMAL'
+                ]
+                """
+            }
+        }
+        then {
+            assert process.success
+            def kept = path(process.out[0].get(0)[1]).linesGzip.findAll { !it.startsWith('#') }
+            // chr1:100 (normal het, adequate depth) and chr1:400 (both het) pass;
+            // chr1:200 (only tumor het) and chr1:300 (normal het but depth < 5) do not.
+            assert kept.size() == 2
+            assert kept.every { it.startsWith('chr1\t100\t') || it.startsWith('chr1\t400\t') }
         }
     }
 }

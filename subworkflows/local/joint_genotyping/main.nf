@@ -1,5 +1,7 @@
+include { SPLIT_INTERVALS                                        } from '../../../modules/local/split_intervals'
 include { GATK4_GENOMICSDBIMPORT                                 } from '../../../modules/nf-core/gatk4/genomicsdbimport/main'
 include { GATK4_GENOTYPEGVCFS                                    } from '../../../modules/nf-core/gatk4/genotypegvcfs/main'
+include { GATHER_GENOTYPED_VCF                                   } from '../../../modules/local/gather_genotyped_vcf'
 include { VARIANT_FILTRATION                                     } from '../../../modules/local/variant_filtration'
 include { MAKE_SITES_ONLY_VCF                                    } from '../../../modules/local/make_sites_only_vcf'
 include { GATK4_VARIANTRECALIBRATOR as VARIANTRECALIBRATOR_SNP   } from '../../../modules/nf-core/gatk4/variantrecalibrator/main'
@@ -29,20 +31,43 @@ workflow JOINT_GENOTYPING {
     snp_resources_ch   = snp_resources_ch.first()
     indel_resources_ch = indel_resources_ch.first()
 
-    // No interval scatter (SPEC.md Sec12.6): every step below runs once per pair over the
-    // whole calling_intervals region. This is why there is no BCFTOOLS_SORT/MergeVcfs step
-    // -- GenotypeGVCFs already emits one complete, sorted VCF, nothing to reassemble.
-    gendb_input = gvcf_pairs_ch
-        .combine(calling_intervals_ch)
-        .map { meta, normal_gvcf, normal_tbi, tumor_gvcf, tumor_tbi, intervals ->
-            [ meta + [id: meta.participant_id], [normal_gvcf, tumor_gvcf], [normal_tbi, tumor_tbi], intervals, [], [] ]
+    // Interval scatter for GenomicsDBImport/GenotypeGVCFs only (SPEC.md Sec12.6, reversed
+    // 2026-10-22): a real Cirro run showed these two steps running serially for 246 minutes
+    // -- ~40% of the full pipeline's critical path -- for a single tumor/normal pair, against
+    // the original no-scatter decision's assumption that scatter "buys little" at that scale.
+    // Reuses SAMPLE_READ_COUNTS's own SPLIT_INTERVALS/gather pattern rather than inventing new
+    // scatter infrastructure. VARIANT_FILTRATION onward stays a single whole-genome call per
+    // pair -- VQSR's Gaussian mixture model needs genome-wide site statistics, so it cannot be
+    // scattered the same way.
+    SPLIT_INTERVALS(
+        ref_fasta_ch,
+        calling_intervals_ch,
+        params.joint_genotyping_scatter_mode,
+        params.joint_genotyping_scatter_count,
+        params.scatter_chromosomes
+    )
+    shards_ch = SPLIT_INTERVALS.out.flatten()
+
+    // Each shard gets its own id (participant + shard name) so GenomicsDBImport/GenotypeGVCFs
+    // outputs don't collide across shards, and so the shard's own interval file can be
+    // rejoined onto GenomicsDBImport's output below by that id instead of a second combine()
+    // (which would re-multiply pairs x shards a second time).
+    pair_shard_ch = gvcf_pairs_ch
+        .combine(shards_ch)
+        .map { meta, normal_gvcf, normal_tbi, tumor_gvcf, tumor_tbi, shard ->
+            [ meta + [id: "${meta.participant_id}.shard_${shard.baseName}"], normal_gvcf, normal_tbi, tumor_gvcf, tumor_tbi, shard ]
+        }
+
+    gendb_input = pair_shard_ch
+        .map { shard_meta, normal_gvcf, normal_tbi, tumor_gvcf, tumor_tbi, shard ->
+            [ shard_meta, [normal_gvcf, tumor_gvcf], [normal_tbi, tumor_tbi], shard, [], [] ]
         }
 
     GATK4_GENOMICSDBIMPORT(gendb_input, false, false, false)
 
     genotype_input = GATK4_GENOMICSDBIMPORT.out.genomicsdb
-        .combine(calling_intervals_ch)
-        .map { meta, workspace, intervals -> [ meta, workspace, [], intervals, [] ] }
+        .join(pair_shard_ch.map { shard_meta, _ng, _nt, _tg, _tt, shard -> [ shard_meta, shard ] }, failOnDuplicate: true, failOnMismatch: true)
+        .map { shard_meta, workspace, shard -> [ shard_meta, workspace, [], shard, [] ] }
 
     GATK4_GENOTYPEGVCFS(
         genotype_input,
@@ -53,11 +78,21 @@ workflow JOINT_GENOTYPING {
         dbsnp_ch.map { _vcf, tbi -> [ [id: 'reference'], tbi ] }
     )
 
+    // Regroup each pair's N per-shard VCFs back together (shard_meta - 'id' reconstructs the
+    // original pair_meta, the same convention this subworkflow's own emit: block below uses)
+    // and reassemble them into one genome-wide VCF before VariantFiltration/VQSR.
+    genotyped_shards_ch = GATK4_GENOTYPEGVCFS.out.vcf
+        .join(GATK4_GENOTYPEGVCFS.out.tbi, failOnDuplicate: true, failOnMismatch: true)
+        .map { shard_meta, vcf, tbi -> [ shard_meta - shard_meta.subMap('id'), vcf, tbi ] }
+        .groupTuple()
+
+    GATHER_GENOTYPED_VCF(genotyped_shards_ch)
+
     // ApplyRecalibration's actual input -- and therefore the final output VCF -- is the
     // ExcessHet-filtered VCF with VQSR applied on top, not the raw GenotypeGVCFs output
     // (verified against ICONICC_paired.3.wdl directly, SPEC.md Sec12.3). MakeSitesOnlyVcf's
     // output is training input only and is never the final VCF.
-    VARIANT_FILTRATION(GATK4_GENOTYPEGVCFS.out.vcf.join(GATK4_GENOTYPEGVCFS.out.tbi, failOnDuplicate: true, failOnMismatch: true))
+    VARIANT_FILTRATION(GATHER_GENOTYPED_VCF.out)
     MAKE_SITES_ONLY_VCF(VARIANT_FILTRATION.out)
 
     fasta_bare = ref_fasta_ch.map { fasta, _fai, _dict -> fasta }

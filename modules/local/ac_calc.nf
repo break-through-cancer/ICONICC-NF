@@ -4,7 +4,7 @@ process AC_CALC {
     memory '4 GB'
 
     input:
-    tuple val(meta), path(tumor_counts), path(phased_files, stageAs: 'phased/*'), path(ad_files, stageAs: 'ad/*'), path(hetinfo_files, stageAs: 'hetinfo/*')
+    tuple val(meta), path(tumor_counts), path(phased_files, stageAs: 'phased/*'), path(ad_files, stageAs: 'ad/*'), path(hetinfo_files, stageAs: 'hetinfo/*'), val(normal_sm), val(tumor_sm)
 
     output:
     tuple val(meta), path("*_read_depth.txt"), path("*_allelic_counts.txt"), path("*_plots.pdf")
@@ -16,7 +16,7 @@ process AC_CALC {
     set -euo pipefail
     ac_calc.R \\
         ${meta.participant_id} ${tumor_counts} ${agg_bins} ${binsize_arg} \\
-        ${meta.normal_sample_id} ${meta.tumor_sample_id} \\
+        ${normal_sm} ${tumor_sm} \\
         ${phased_files} ${ad_files} ${hetinfo_files}
     """
 }

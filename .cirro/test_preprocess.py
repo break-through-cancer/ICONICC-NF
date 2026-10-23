@@ -181,6 +181,102 @@ class BuildSamplesheetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "No Cirro sample metadata"):
             preprocess.build_samplesheet(paths, sheet)
 
+    def test_patient_id_column_is_accepted(self):
+        # Real Cirro sample metadata carried over from a fastq ingestion samplesheet
+        # uses "patient_id", not the project schema's "patient".
+        paths = recal_paths("PT01_normal") + recal_paths("PT01_tumor")
+        sheet = pd.DataFrame([
+            dict(sample="PT01_normal", patient_id="PT01", sex="female", status="Normal"),
+            dict(sample="PT01_tumor", patient_id="PT01", sex="female", status="Tumor"),
+        ])
+        result = preprocess.build_samplesheet(paths, sheet)
+        self.assertEqual(sorted(result["patient"].unique()), ["PT01"])
+
+    def test_patient_column_preferred_over_patient_id(self):
+        paths = recal_paths("PT01_normal") + recal_paths("PT01_tumor")
+        sheet = pd.DataFrame([
+            dict(sample="PT01_normal", patient="PT01", patient_id="wrong", sex="female", status="Normal"),
+            dict(sample="PT01_tumor", patient="PT01", patient_id="wrong", sex="female", status="Tumor"),
+        ])
+        result = preprocess.build_samplesheet(paths, sheet)
+        self.assertEqual(sorted(result["patient"].unique()), ["PT01"])
+
+    def test_sex_accepts_xx_xy_karyotype(self):
+        paths = recal_paths("PT01_normal") + recal_paths("PT01_tumor")
+        sheet = samplesheet_df([
+            ("PT01_normal", "PT01", "XY", "Normal"),
+            ("PT01_tumor", "PT01", "xy", "Tumor"),
+        ])
+        result = preprocess.build_samplesheet(paths, sheet)
+        self.assertEqual(sorted(result["sex"].unique()), ["male"])
+
+    def test_bad_sex_is_still_hard_error(self):
+        paths = recal_paths("PT01_normal") + recal_paths("PT01_tumor")
+        sheet = samplesheet_df([
+            ("PT01_normal", "PT01", "unknown", "Normal"),
+            ("PT01_tumor", "PT01", "female", "Tumor"),
+        ])
+        with self.assertRaisesRegex(ValueError, "sex must be 'male'/'female' or 'XX'/'XY'"):
+            preprocess.build_samplesheet(paths, sheet)
+
+
+class ProcessFormTests(unittest.TestCase):
+    """The Cirro launch form/input mapping, not preprocess.py -- same file as
+    break-through-cancer/parabricks-fq2bam-bqsr's own .cirro/align/test_align_preprocess.py,
+    which mixes the two for the same reason (one process, one Cirro folder)."""
+
+    def test_haplotypecaller_memory_override_is_offered_and_mapped(self):
+        import json
+        here = Path(__file__).parent
+        field = json.loads((here / "process-form.json").read_text())["form"]["properties"]["haplotypecaller_memory_gb"]
+        self.assertEqual(field["type"], "integer")
+        self.assertNotIn("default", field)
+        mapping = json.loads((here / "process-input.json").read_text())
+        self.assertEqual(mapping["haplotypecaller_memory_gb"], "$.dataset.params.haplotypecaller_memory_gb")
+
+    def test_scatter_params_are_offered_and_mapped(self):
+        # SPEC.md Sec14.2: read_counts_scatter_* and cnv_scatter_* share the same
+        # groups/per_chromosome convention and the same nextflow.config defaults
+        # (groups / 8 / groups / 4) -- the form fields mirror those defaults exactly so
+        # leaving a field untouched on the launch form matches a raw-params run. Each
+        # pair is nested under a parent object using JSON Schema dependencies/oneOf
+        # (same mechanism break-through-cancer/parabricks-fq2bam-bqsr's own
+        # process-form.json uses for its output_fmt/cram_version pair) so the shard-
+        # count field is hidden entirely on the form when mode is 'per_chromosome',
+        # where it has no effect.
+        import json
+        here = Path(__file__).parent
+        properties = json.loads((here / "process-form.json").read_text())["form"]["properties"]
+        mapping = json.loads((here / "process-input.json").read_text())
+
+        groups = {
+            "read_counts_scatter": ("read_counts_scatter_mode", "read_counts_scatter_count", 8),
+            "cnv_scatter": ("cnv_scatter_mode", "cnv_scatter_count", 4),
+        }
+
+        for parent, (mode_name, count_name, count_default) in groups.items():
+            group = properties[parent]
+            self.assertEqual(group["type"], "object")
+
+            mode_field = group["properties"][mode_name]
+            self.assertEqual(mode_field["type"], "string")
+            self.assertEqual(set(mode_field["enum"]), {"groups", "per_chromosome"})
+            self.assertEqual(mode_field["default"], "groups")
+            self.assertEqual(mapping[mode_name], f"$.dataset.params.{parent}.{mode_name}")
+            self.assertEqual(mapping[count_name], f"$.dataset.params.{parent}.{count_name}")
+
+            branches = group["dependencies"][mode_name]["oneOf"]
+            groups_branch = next(b for b in branches if b["properties"][mode_name]["enum"] == ["groups"])
+            per_chr_branch = next(b for b in branches if b["properties"][mode_name]["enum"] == ["per_chromosome"])
+
+            count_field = groups_branch["properties"][count_name]
+            self.assertEqual(count_field["type"], "integer")
+            self.assertEqual(count_field["default"], count_default)
+
+            # The shard-count field must not appear at all on the per_chromosome
+            # branch -- that's what actually hides it on the form, not just a UI hint.
+            self.assertNotIn(count_name, per_chr_branch["properties"])
+
 
 if __name__ == "__main__":
     unittest.main()

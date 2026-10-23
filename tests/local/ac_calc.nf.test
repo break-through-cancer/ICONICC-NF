@@ -12,7 +12,9 @@ nextflow_process {
                     file("\${projectDir}/tests/fixtures/cnv_core/TEST_TUMOR_counts.txt"),
                     files("\${projectDir}/tests/fixtures/cnv_core/query/*.phasedGT.chr*.1.txt"),
                     files("\${projectDir}/tests/fixtures/cnv_core/query/*.AD.chr*.txt"),
-                    files("\${projectDir}/tests/fixtures/cnv_core/query/*_HetInfo.txt")
+                    files("\${projectDir}/tests/fixtures/cnv_core/query/*_HetInfo.txt"),
+                    'TEST_NORMAL',
+                    'TEST_TUMOR'
                 ]
                 """
             }
