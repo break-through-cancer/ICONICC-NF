@@ -1,3 +1,60 @@
 {
-  "commands": []
+  "commands": [
+    {
+      "command": "hot.Parquet",
+      "params": {
+        "source": "$data_directory/segment/*.seg.txt",
+        "target": "segments.parquet",
+        "name": "CNV Segments",
+        "desc": "Final allelic-ratio + tangent-normalized copy-number segments per tumor/normal pair",
+        "read_csv": {
+          "parse": { "delimiter": "\t" },
+          "read": { "autogenerate_column_names": false }
+        },
+        "cols": [
+          { "col": "ID", "name": "Pair ID", "desc": "Tumor_vs_normal participant identifier" },
+          { "col": "chrom", "name": "Chromosome", "desc": "Chromosome (chr1-chr22, chrX)" },
+          { "col": "loc.start", "name": "Start", "desc": "Segment start coordinate" },
+          { "col": "loc.end", "name": "End", "desc": "Segment end coordinate" },
+          { "col": "num.mark", "name": "Bin Count", "desc": "Approximate number of bins/probes in the segment" },
+          { "col": "seg_nature", "name": "Segment Source", "desc": "'original' (allelic-ratio segmentation) or 'recovered' (rescued from tangent outlier recovery)" },
+          { "col": "seg.mean", "name": "Log2 Signal", "desc": "Segment-level mean log2 tangent-normalized signal; positive suggests gain, negative suggests loss" }
+        ]
+      }
+    },
+    {
+      "command": "hot.Parquet",
+      "params": {
+        "source": "$data_directory/segment/*_processed_counts.txt",
+        "target": "processed_counts.parquet",
+        "name": "Per-Bin Processed Counts",
+        "desc": "Per-bin read depth, allelic fractions, and tangent-normalized signal underlying the CNV segments",
+        "read_csv": {
+          "parse": { "delimiter": "\t" },
+          "read": { "autogenerate_column_names": false }
+        },
+        "cols": [
+          { "col": "CONTIG", "name": "Chromosome", "desc": "Genomic bin's chromosome" },
+          { "col": "START", "name": "Start", "desc": "Genomic bin start coordinate" },
+          { "col": "END", "name": "End", "desc": "Genomic bin end coordinate" },
+          { "col": "loci", "name": "Locus Key", "desc": "CONTIG:START join key linking allelic-count and tangent-normalized rows" },
+          { "col": "COUNT", "name": "Read Count", "desc": "Raw read depth in this bin" },
+          { "col": "NORMALIZED_COUNT", "name": "Normalized Count", "desc": "Median-normalized read depth" },
+          { "col": "AF1", "name": "Allelic Fraction 1", "desc": "Phased allelic fraction, haplotype 1" },
+          { "col": "AF2", "name": "Allelic Fraction 2", "desc": "Phased allelic fraction, haplotype 2" },
+          { "col": "snp_count", "name": "SNP Count", "desc": "Number of heterozygous SNPs supporting this bin's allelic-fraction estimate" },
+          { "col": "C1", "name": "Allelic Copy Ratio 1", "desc": "NORMALIZED_COUNT times AF1" },
+          { "col": "C2", "name": "Allelic Copy Ratio 2", "desc": "NORMALIZED_COUNT times AF2" },
+          { "col": "log2_tangent", "name": "Log2 Tangent Signal", "desc": "Tangent-normalized log2 read-depth signal" },
+          { "col": "AFMAX", "name": "Max Allelic Fraction", "desc": "max(AF1, AF2)" },
+          { "col": "AFMIN", "name": "Min Allelic Fraction", "desc": "min(AF1, AF2)" },
+          { "col": "AF_ratio", "name": "Allelic Fraction Ratio", "desc": "Derived allelic-ratio feature used in segmentation" },
+          { "col": "cum_start", "name": "Cumulative Start", "desc": "Genome-wide cumulative start coordinate, for whole-genome plotting" },
+          { "col": "cum_end", "name": "Cumulative End", "desc": "Genome-wide cumulative end coordinate, for whole-genome plotting" },
+          { "col": "AR_segment", "name": "Allelic-Ratio Segment ID", "desc": "ID of the allelic-ratio-based segment this bin was assigned to" },
+          { "col": "tangent_segment", "name": "Tangent Segment ID", "desc": "ID of the tangent (CBS)-based segment this bin was assigned to" }
+        ]
+      }
+    }
+  ]
 }
